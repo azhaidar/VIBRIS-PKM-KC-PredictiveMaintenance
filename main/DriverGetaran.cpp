@@ -94,13 +94,15 @@ void TaskDriverGetaran(void *pvParameters) {
         float rateError = fabsf(actualRateHz - (float)VIBRATION_SAMPLE_RATE_HZ) / (float)VIBRATION_SAMPLE_RATE_HZ;
         localVibBuffer.actual_rate_hz = actualRateHz;
         if (rateError > SAMPLE_RATE_TOLERANCE || overrunCount > 0) {
-            Serial.printf("[WARNING][DriverGetaran] Target %uHz TIDAK tercapai! Aktual=%.1fHz "
+            #if DEBUG_VERBOSE
+                Serial.printf("[WARNING][DriverGetaran] Target %uHz TIDAK tercapai! Aktual=%.1fHz "
                           "(%d/%d sample overrun/telat). FFTProcessor tetap menghitung pakai "
                           "asumsi %uHz -> RPM & band energy BISA MELESET. Turunkan "
                           "VIBRATION_SAMPLE_RATE_HZ di config.h ke nilai yang tercapai, atau "
                           "optimasi I2C (naikkan clock/kurangi overhead driver).\n",
                           VIBRATION_SAMPLE_RATE_HZ, actualRateHz, overrunCount, FFT_SAMPLES,
                           VIBRATION_SAMPLE_RATE_HZ);
+            #endif
         }
 
         QueueHandle_t q = Scheduler_GetVibrationQueue();

@@ -139,12 +139,19 @@ void loop() {
         } else if (cmd == 'L') {   // 'L' = ground truth kurang oli (lubrication fault) sengaja dipasang
             strncpy(groundTruthLabel, "LUBRICATION", sizeof(groundTruthLabel) - 1);
             Serial.println(F("[TEST] Ground truth: LUBRICATION"));
+        } else if (cmd == 'D') {   // 'D' = ground truth motor DIAM/mati (kelas ke-6 TinyML)
+            strncpy(groundTruthLabel, "MATI", sizeof(groundTruthLabel) - 1);
+            Serial.println(F("[TEST] Ground truth: MATI"));
         } else if (cmd == 'X') {   // 'X' = Raspi minta ESP32 REBOOT PENUH
             Serial.println(F("[CMD] Reboot ESP32 diminta dari Raspi..."));
             delay(150);  // beri waktu buffer Serial TX selesai terkirim SEBELUM restart
             ESP.restart();
         } else if (cmd >= '0' && cmd <= '9') {   // BARU: pilih slot baseline mesin (0-5)
             selectMachineBaselineSlot(cmd - '0');
+        } else if (cmd == 'R') {   // 'R' = trigger kalibrasi ulang, TANPA reboot/putus koneksi
+            Serial.println(F("[CMD] Kalibrasi ulang diminta dari Raspi/laptop..."));
+            startCalibrationPhase();
+            calibrationStartMillis = millis();
         }
     }
 
@@ -254,20 +261,21 @@ void loop() {
         Serial.printf("[BAND_ENERGY] E0=%.4f E1=%.4f E2=%.4f E3=%.4f\n",
             bandEnergies[0], bandEnergies[1], bandEnergies[2], bandEnergies[3]);
 #endif
-#if PLOTTER_MODE
-    Serial.printf("Suhu:%.2f Arus:%.4f Getaran:%.4f Suara:%.2f Status:%s\n",
-        merged.suhu, merged.arus, merged.rms_getaran, merged.rms_suara, result.status_label);
-#else
-    Serial.printf("\n================= TELEMETRI MONITORING =================");
-    Serial.printf("\nRPM ESTIMATED : %7.2f RPM", result.rpm_estimated);
-    Serial.printf("\nANOMALY STATE : %s (Mahalanobis D2=%.3f, baseline self-calibrated)", result.status_label, result.mahalanobis_D2);
-    Serial.printf("\n------------------- DATA MENTAH SENSOR -----------------");
-    Serial.printf("\nGETARAN (RMS) : %7.4f", merged.rms_getaran);
-    Serial.printf("\nSUARA (RMS)   : %7.2f", merged.rms_suara);
-    Serial.printf("\nARUS MOTOR    : %7.4f A", merged.arus);
-    Serial.printf("\nSUHU OPERASI  : %7.2f C", merged.suhu);
-    Serial.printf("\n========================================================\n");
+#if DEBUG_VERBOSE
+    #if PLOTTER_MODE
+        Serial.printf("Suhu:%.2f Arus:%.4f Getaran:%.4f Suara:%.6f Status:%s\n",
+            merged.suhu, merged.arus, merged.rms_getaran, merged.rms_suara, result.status_label);
+    #else
+        Serial.printf("\n================= TELEMETRI MONITORING =================");
+        Serial.printf("\nRPM ESTIMATED : %7.2f RPM", result.rpm_estimated);
+        Serial.printf("\nANOMALY STATE : %s (Mahalanobis D2=%.3f, baseline self-calibrated)", result.status_label, result.mahalanobis_D2);
+        Serial.printf("\n------------------- DATA MENTAH SENSOR -----------------");
+        Serial.printf("\nGETARAN (RMS) : %7.4f", merged.rms_getaran);
+        Serial.printf("\nSUARA (RMS)   : %7.2f", merged.rms_suara);
+        Serial.printf("\nARUS MOTOR    : %7.4f A", merged.arus);
+        Serial.printf("\nSUHU OPERASI  : %7.2f C", merged.suhu);
+        Serial.printf("\n========================================================\n");
+    #endif
 #endif
-
     vTaskDelay(pdMS_TO_TICKS(TICK_DELAY_REPORT));
 }

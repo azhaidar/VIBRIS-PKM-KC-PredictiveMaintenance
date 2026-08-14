@@ -88,8 +88,9 @@ void DriverAudioFFTProcessor_Process(AudioBuffer *input, float *bandEnergies_out
     // Metric tambahan dari paper IEEE Access 2023 — untuk validasi dan presentasi
     float roughness  = computeAudioRoughness(input->samples, AUDIO_FFT_SAMPLES);
     float brightness = computeAudioBrightness(aReal, freqRes, AUDIO_FFT_SAMPLES);
-    
-    Serial.printf("[AUDIO] Roughness=%.4f Brightness=%.4f\n", roughness, brightness);
+    #if DEBUG_VERBOSE
+        Serial.printf("[AUDIO] Roughness=%.4f Brightness=%.4f\n", roughness, brightness);
+    #endif
 if (roughness_out)  *roughness_out  = roughness;
 if (brightness_out) *brightness_out = brightness;
 }

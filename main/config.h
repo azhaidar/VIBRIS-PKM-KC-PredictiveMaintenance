@@ -7,8 +7,8 @@
 // Sensor Arus (SCT 30A) - Connected to Analog-to-Digital Converter 1
 #define PIN_SCT_ADC         4   // ADC1_CH3
 // Sensor Getaran (LIS3DH) - Connected to Dedicated I2C Bus
-#define PIN_LIS3DH_SDA      6   // I2C Serial Data
-#define PIN_LIS3DH_SCL      7   // I2C Serial Clock
+#define PIN_LIS3DH_SDA      7  // I2C Serial Data
+#define PIN_LIS3DH_SCL      6   // I2C Serial Clock
 // Sensor Akustik / Mikrofon (INMP441) - Connected to Hardware I2S0
 #define PIN_INM_I2S_SD      16  // I2S Serial Data
 #define PIN_INM_I2S_WS      17  // I2S Word Select / Left-Right Clock
@@ -68,3 +68,4 @@
 #define ENABLE_RPM_DIAGNOSIS 0   // 0 = diagnosis berbasis RPM/BPFO/BPFI nonaktif
                                    // (sesuai arahan: fokus murni domain frekuensi,
                                    // tanpa RPM). 1 = aktifkan lagi kalau nanti dibutuhkan.
+#define DEBUG_VERBOSE 0   // 0 = sesi ambil data resmi (JSON bersih), 1 = debug manual

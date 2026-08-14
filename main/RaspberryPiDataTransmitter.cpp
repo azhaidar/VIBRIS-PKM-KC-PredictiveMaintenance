@@ -34,8 +34,8 @@ void Transmitter_SendResult(SensorFeatures features, DetectionResult result, con
     Serial.printf(
         "{"
         "\"rms_v\":%.4f,\"rms_x\":%.4f,\"rms_y\":%.4f,\"rms_z\":%.4f,"
-        "\"rms_a\":%.2f,\"cur\":%.4f,\"cur_raw_adc\":%.2f,"
-        "\"temp\":%.2f,\"temp_raw\":%.2f,"
+        "\"rms_a\":%.6f,\"cur\":%.4f,\"cur_raw_adc\":%.2f,"
+        "\"temp\":%.2f,\"temp_raw\":%.3f,"
         "\"rpm\":%.2f,\"snr\":%.2f,\"severity\":%.3f,\"status\":\"%s\","
         "\"e_unbalance\":%.4f,\"e_misalign\":%.4f,\"e_bpfo\":%.4f,\"e_bpfi\":%.4f,"
         "\"diagnosis\":\"%s\",\"diag_conf\":%.2f,"

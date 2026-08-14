@@ -7,14 +7,14 @@
 
 #define SAMPLE_RATE VIBRATION_SAMPLE_RATE_HZ
 #define FR_MIN_HZ 5.0
-#define FR_MAX_HZ 50.0
+#define FR_MAX_HZ 60.0
 
 double vReal[FFT_SAMPLES];
 double vImag[FFT_SAMPLES];
 ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal, vImag, FFT_SAMPLES, SAMPLE_RATE);
 
 //Definisi Tunggal current bearing spec
-BearingSpec currentBearingSpec = ACTIVE_BEARING_SPEC;
+BearingSpec currentBearingSpec = BEARING_TABLE[BEARING_DEFAULT_INDEX];
 
 static bool hasRollingBearing = true;
 
@@ -131,13 +131,13 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
             top3Amp[2] = amp; top3Bin[2] = i;
         }
     }
-    Serial.printf("[FFT-DIAG] top3: #1=%.2fHz(~%.0fRPM,amp=%.1f) #2=%.2fHz(~%.0fRPM,amp=%.1f) #3=%.2fHz(~%.0fRPM,amp=%.1f) | snr=%.2f snrOK=%d | rms=%.4f\n",
-        top3Bin[0]*freqResDiag, top3Bin[0]*freqResDiag*60.0f, top3Amp[0],
-        top3Bin[1]*freqResDiag, top3Bin[1]*freqResDiag*60.0f, top3Amp[1],
-        top3Bin[2]*freqResDiag, top3Bin[2]*freqResDiag*60.0f, top3Amp[2],
-        snr, snrReliable, features->rms_getaran);
-
-
+    #if DEBUG_VERBOSE
+        Serial.printf("[FFT-DIAG] top3: #1=%.2fHz(~%.0fRPM,amp=%.1f) #2=%.2fHz(~%.0fRPM,amp=%.1f) #3=%.2fHz(~%.0fRPM,amp=%.1f) | snr=%.2f snrOK=%d | rms=%.4f\n",
+            top3Bin[0]*freqResDiag, top3Bin[0]*freqResDiag*60.0f, top3Amp[0],
+            top3Bin[1]*freqResDiag, top3Bin[1]*freqResDiag*60.0f, top3Amp[1],
+            top3Bin[2]*freqResDiag, top3Bin[2]*freqResDiag*60.0f, top3Amp[2],
+            snr, snrReliable, features->rms_getaran);
+    #endif
     if (!reliable) {
         reliableStreak = 0;
         stableRPM = 0.0f;
@@ -165,7 +165,7 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
                 currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
                 currentBearingSpec.phi_deg);
 
-            // ✅ DITAMBAHKAN — dua frekuensi bearing yang sebelumnya belum ada
+            // DITAMBAHKAN — dua frekuensi bearing yang sebelumnya belum ada
             float bsf_hz = RPM_ComputeBSF(fr_hz, currentBearingSpec.n_balls,
                 currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
                 currentBearingSpec.phi_deg);
@@ -178,7 +178,7 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
             bandEnergies_out[3] = bandEnergy(vReal, freqRes,
                 0.9f * bpfi_hz, 1.1f * bpfi_hz, FFT_SAMPLES);
 
-            // ✅ DITAMBAHKAN — print BSF dan FTF ke Serial untuk validasi
+            //DITAMBAHKAN — print BSF dan FTF ke Serial untuk validasi
             // (belum masuk bandEnergies karena array hanya ukuran 4)
             Serial.printf("[FFT] BPFO=%.1fHz BPFI=%.1fHz BSF=%.1fHz FTF=%.1fHz\n",
                         bpfo_hz, bpfi_hz, bsf_hz, ftf_hz);
@@ -198,3 +198,6 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
         // jangan buang siklus CPU ESP32 buat hitung sesuatu yang nggak dipakai.
         for (int i = 0; i < 4; i++) bandEnergies_out[i] = 0.0f;
     #endif
+    features->valid = true;
+    
+}

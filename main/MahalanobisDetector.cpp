@@ -39,8 +39,8 @@ float getChiSquare99() {
 
 // GANTI nama diagBandStd -> diagBandVar (disimpan sebagai VARIANCE, bukan std,
 // supaya EMA-nya matematis benar; di-sqrt() jadi std pas dipakai)
-static float diagBandMean[3] = {0.0f, 0.0f, 0.0f, 0.0f};
-static float diagBandVar[3]  = {1.0f, 1.0f, 1.0f, 1.0f};
+static float diagBandMean[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+static float diagBandVar[4]  = {1.0f, 1.0f, 1.0f, 1.0f};
 static bool  diagBaselineReady = false;
 
 // BARU: baseline band audio, placeholder, konvergen otomatis via EMA

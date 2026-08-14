@@ -49,7 +49,11 @@ struct DetectionResult {
     char  ml_label[16];           // TinyML label
     float ml_confidence;          // TinyML confidence
 };
-
+// Spek bearing per klaster mesin.
+// Klaster ditentukan dari kemiripan hasil hitung BPFO/BPFI (RPM x geometri
+// bearing) -- bukan dari kategori daya/ukuran fisik. Toleransi window
+// deteksi band di FFTProcessor.cpp itu +-10%, jadi klaster beda kalau beda
+// RPM/geometri > 10%. Lihat diskusi klaster A/B, [tanggal hari ini].
 // Tbearign abangku
 struct BearingSpec {
     int   n_balls;
@@ -59,17 +63,18 @@ struct BearingSpec {
     const char* label;
 };
 
-// Tabel bearing umum (approksimasi Pd = rata-rata bore+OD, Bd dari referensi
-// umum seri 62xx -- BUKAN data pabrikan presisi. Verifikasi manual pakai
-// jangka sorong kalau butuh akurasi tinggi untuk laporan resmi).
-// Spek bearing motor uji aktif: 6202 (drive end) & 6202/6201 (non-drive end),
-// umum untuk dinamo 1-fasa 4-pole 1/4HP. Ganti angka ini kalau motor uji diganti.
-static const BearingSpec ACTIVE_BEARING_SPEC = {8, 6.35f, 25.0f, 0.0f, "6202 (15x35x11)"};
+// Sumber angka: datasheet katalog standar seri 62xx (SKF/NSK/NTN), BUKAN
+// hasil ukur jangka sorong langsung -- verifikasi manual kalau butuh akurasi
+// tinggi untuk laporan resmi.
+static const BearingSpec BEARING_TABLE[] = {
+    // n_balls, Bd(mm), Pd(mm), phi(deg), label
+    {8, 6.35f, 25.0f, 0.0f, "Klaster A: 1-fasa 4-kutub ~1400RPM (6202)"},
+    {8, 6.75f, 28.5f, 0.0f, "Klaster B: 1-fasa 2-kutub ~2800RPM (6203)"},
+};
+#define BEARING_TABLE_SIZE (sizeof(BEARING_TABLE)/sizeof(BEARING_TABLE[0]))
+#define BEARING_DEFAULT_INDEX 0
 
 // PENTING: bukan 'static' -- ini DIDEKLARASIKAN di sini, tapi
 // DIDEFINISIKAN cuma sekali di FFTProcessor.cpp (lihat FIX 2).
 // Supaya semua file (main.ino, FFTProcessor.cpp) pegang variabel YANG SAMA.
 extern BearingSpec currentBearingSpec;
-
-extern int ml_label;
-extern float ml_confidence;

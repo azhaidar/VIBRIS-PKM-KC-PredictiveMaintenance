@@ -59,8 +59,10 @@ static void TaskFFTProcessor(void *pvParameters) {
 
             updateVibrationFeature(fftLocalFeatures.rms_getaran);
 
-            Serial.printf("[FFT] RPM=%.1f |  Y_RMS=%.4f | X_RMS=%.4f | Z_RMS=%.4f | Unbalance=%.2f | Misalign=%.2f\n",
-                          rpmResult, latestRmsY, latestRmsX, latestRmsZ, bandEnergies[0], bandEnergies[1]);
+            #if DEBUG_VERBOSE
+                Serial.printf("[FFT] RPM=%.1f |  Y_RMS=%.4f | X_RMS=%.4f | Z_RMS=%.4f | Unbalance=%.2f | Misalign=%.2f\n",
+                              rpmResult, latestRmsY, latestRmsX, latestRmsZ, bandEnergies[0], bandEnergies[1]);
+            #endif
         }
     }
 void Scheduler_GetLatestAxisRMS(float *xOut, float *yOut, float *zOut) {

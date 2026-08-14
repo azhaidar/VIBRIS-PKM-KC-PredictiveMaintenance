@@ -81,11 +81,12 @@ static void runInferenceOnFullBuffer() {
     mlLastConfidence = bestScore;
     mlHasNewResult = true;
 
-    Serial.printf("[TinyML] Inference (DSP:%dms Klasifikasi:%dms) -> %s (%.3f)\n",
-                  result.timing.dsp, result.timing.classification,
-                  mlLastLabel, mlLastConfidence);
+    #if DEBUG_VERBOSE
+        Serial.printf("[TinyML] Inference (DSP:%dms Klasifikasi:%dms) -> %s (%.3f)\n",
+                      result.timing.dsp, result.timing.classification,
+                      mlLastLabel, mlLastConfidence);
+    #endif
 }
-
 void TinyML_Update(const SensorFeatures &features, float rpmEstimated) {
     mlHasNewResult = false; // reset dulu, cuma true di iterasi tepat setelah inferensi baru
 
