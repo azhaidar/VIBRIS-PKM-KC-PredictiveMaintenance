@@ -61,6 +61,9 @@ void setAudioBandBaseline(float mean[AUDIO_BAND_COUNT], float std[AUDIO_BAND_COU
         audioBandVar[i]  = std[i] * std[i];
     }
 }
+void resetDiagnosisBandBaseline() {
+    diagBaselineReady = false;
+}
 
 // BARU: EMA generik band mean/variance, dipakai untuk band getaran (n=4) & audio (n=3)
 static void updateBandBaselineIfNormal(float mean[], float variance[], int n,
@@ -113,7 +116,7 @@ DetectionResult runDetectionCycle() {
     }
 
     float currentFeatures[3] = {
-        merged.rms_getaran, Scheduler_GetLatestRoughness(), merged.suhu
+        merged.rms_getaran, Scheduler_GetLatestRoughness(), getSmoothedTempRate(merged.suhu)
     };
 
     float baselineMean[3];

@@ -155,42 +155,60 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
     float fr_hz = fr_rpm / 60.0;
     float freqRes = effectiveSampleRate / FFT_SAMPLES;
     #if ENABLE_RPM_DIAGNOSIS
-        bandEnergies_out[0] = bandEnergy(vReal, freqRes, 0.9f * fr_hz, 1.1f * fr_hz, FFT_SAMPLES);
-        bandEnergies_out[1] = bandEnergy(vReal, freqRes, 1.9f * fr_hz, 2.1f * fr_hz, FFT_SAMPLES);
-        if (hasRollingBearing) {
-            float bpfo_hz = RPM_ComputeBPFO(fr_hz, currentBearingSpec.n_balls,
-                currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
-                currentBearingSpec.phi_deg);
-            float bpfi_hz = RPM_ComputeBPFI(fr_hz, currentBearingSpec.n_balls,
-                currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
-                currentBearingSpec.phi_deg);
+        // bandEnergies_out[0] = bandEnergy(vReal, freqRes, 0.9f * fr_hz, 1.1f * fr_hz, FFT_SAMPLES);
+        // bandEnergies_out[1] = bandEnergy(vReal, freqRes, 1.9f * fr_hz, 2.1f * fr_hz, FFT_SAMPLES);
+        // if (hasRollingBearing) {
+        //     float bpfo_hz = RPM_ComputeBPFO(fr_hz, currentBearingSpec.n_balls,
+        //         currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
+        //         currentBearingSpec.phi_deg);
+        //     float bpfi_hz = RPM_ComputeBPFI(fr_hz, currentBearingSpec.n_balls,
+        //         currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
+        //         currentBearingSpec.phi_deg);
 
-            // DITAMBAHKAN — dua frekuensi bearing yang sebelumnya belum ada
-            float bsf_hz = RPM_ComputeBSF(fr_hz, currentBearingSpec.n_balls,
-                currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
-                currentBearingSpec.phi_deg);
-            float ftf_hz = RPM_ComputeFTF(fr_hz,
-                currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
-                currentBearingSpec.phi_deg);
+        //     // DITAMBAHKAN — dua frekuensi bearing yang sebelumnya belum ada
+        //     float bsf_hz = RPM_ComputeBSF(fr_hz, currentBearingSpec.n_balls,
+        //         currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
+        //         currentBearingSpec.phi_deg);
+        //     float ftf_hz = RPM_ComputeFTF(fr_hz,
+        //         currentBearingSpec.d_ball_mm, currentBearingSpec.D_pitch_mm,
+        //         currentBearingSpec.phi_deg);
 
-            bandEnergies_out[2] = bandEnergy(vReal, freqRes,
-                0.9f * bpfo_hz, 1.1f * bpfo_hz, FFT_SAMPLES);
-            bandEnergies_out[3] = bandEnergy(vReal, freqRes,
-                0.9f * bpfi_hz, 1.1f * bpfi_hz, FFT_SAMPLES);
+        //     bandEnergies_out[2] = bandEnergy(vReal, freqRes,
+        //         0.9f * bpfo_hz, 1.1f * bpfo_hz, FFT_SAMPLES);
+        //     bandEnergies_out[3] = bandEnergy(vReal, freqRes,
+        //         0.9f * bpfi_hz, 1.1f * bpfi_hz, FFT_SAMPLES);
 
-            //DITAMBAHKAN — print BSF dan FTF ke Serial untuk validasi
-            // (belum masuk bandEnergies karena array hanya ukuran 4)
-            Serial.printf("[FFT] BPFO=%.1fHz BPFI=%.1fHz BSF=%.1fHz FTF=%.1fHz\n",
-                        bpfo_hz, bpfi_hz, bsf_hz, ftf_hz);
+        //     //DITAMBAHKAN — print BSF dan FTF ke Serial untuk validasi
+        //     // (belum masuk bandEnergies karena array hanya ukuran 4)
+        //     Serial.printf("[FFT] BPFO=%.1fHz BPFI=%.1fHz BSF=%.1fHz FTF=%.1fHz\n",
+        //                 bpfo_hz, bpfi_hz, bsf_hz, ftf_hz);
 
-            // ✂️ DIHAPUS — baris ini salah secara sintaks C++, 
-            // deklarasi fungsi tidak boleh di dalam blok if:
-            // void setBearingType(bool rollingBearing);
+        //     // ✂️ DIHAPUS — baris ini salah secara sintaks C++, 
+        //     // deklarasi fungsi tidak boleh di dalam blok if:
+        //     // void setBearingType(bool rollingBearing);
 
-        } else {
-            bandEnergies_out[2] = 0.0f;
-            bandEnergies_out[3] = 0.0f;
-        }
+        // } else {
+        //     bandEnergies_out[2] = 0.0f;
+        //     bandEnergies_out[3] = 0.0f;
+        // }
+            bandEnergies_out[0] = bandEnergy(vReal, freqRes,
+                (1.0f - BAND_WINDOW_PERCENT) * currentBearingSpec.oneX_hz,
+                (1.0f + BAND_WINDOW_PERCENT) * currentBearingSpec.oneX_hz, FFT_SAMPLES);
+            bandEnergies_out[1] = bandEnergy(vReal, freqRes,
+                (1.0f - BAND_WINDOW_PERCENT) * currentBearingSpec.twoX_hz,
+                (1.0f + BAND_WINDOW_PERCENT) * currentBearingSpec.twoX_hz, FFT_SAMPLES);
+
+            if (hasRollingBearing) {
+                bandEnergies_out[2] = bandEnergy(vReal, freqRes,
+                    (1.0f - BAND_WINDOW_PERCENT) * currentBearingSpec.bpfo_hz,
+                    (1.0f + BAND_WINDOW_PERCENT) * currentBearingSpec.bpfo_hz, FFT_SAMPLES);
+                bandEnergies_out[3] = bandEnergy(vReal, freqRes,
+                    (1.0f - BAND_WINDOW_PERCENT) * currentBearingSpec.bpfi_hz,
+                    (1.0f + BAND_WINDOW_PERCENT) * currentBearingSpec.bpfi_hz, FFT_SAMPLES);
+            } else {
+                bandEnergies_out[2] = 0.0f;
+                bandEnergies_out[3] = 0.0f;
+            }
         
     #else
         // ENABLE_RPM_DIAGNOSIS = 0: sistem murni domain frekuensi non-order-tracking

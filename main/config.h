@@ -65,7 +65,13 @@
 #define RPM_MAX_DELTA_MIN       50.0f   // BARU
 #define PRIO_TASK_AUDIO_FFT     1       // BARU
 #define STACK_TASK_AUDIO_FFT    4096    // BARU
-#define ENABLE_RPM_DIAGNOSIS 0   // 0 = diagnosis berbasis RPM/BPFO/BPFI nonaktif
-                                   // (sesuai arahan: fokus murni domain frekuensi,
-                                   // tanpa RPM). 1 = aktifkan lagi kalau nanti dibutuhkan.
+
+
+#define FIXED_BPFO_HZ  69.6f
+#define FIXED_BPFI_HZ  117.1f
+// BARU:
+#define ENABLE_RPM_DIAGNOSIS 1   // AKTIF: band diagnosis pakai frekuensi FIXED 
+                                   // per klaster (lihat BEARING_TABLE di SharedTypes.h),
+                                   // BUKAN lagi RPM real-time. Lihat FFTProcessor.cpp.
+#define BAND_WINDOW_PERCENT 0.10f  // toleransi ±10% di sekitar frekuensi fixed
 #define DEBUG_VERBOSE 0   // 0 = sesi ambil data resmi (JSON bersih), 1 = debug manual

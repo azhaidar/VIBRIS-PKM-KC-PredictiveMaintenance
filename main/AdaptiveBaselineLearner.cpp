@@ -89,3 +89,7 @@ void getCurrentBaseline(float meanOutput[3], float sigmaInverseOutput[3][3]) {
 void getCurrentStdDev(float stdOutput[3]) {
     for (int i = 0; i < 3; i++) stdOutput[i] = sqrtf(currentVar[i]);
 }
+void resetBaselineLearner() {
+    learnerInitialized = false;
+    Serial.println(F("[AdaptiveLearner] Learner di-reset -- menunggu kalibrasi baru."));
+}

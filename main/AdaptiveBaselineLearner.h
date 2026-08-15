@@ -72,3 +72,8 @@ void getCurrentBaseline(float meanOutput[3], float sigmaInverseOutput[3][3]);
 // BARU: getter std-dev adaptif, dipanggil MahalanobisDetector.cpp untuk
 // menstandardisasi fitur real-time -- gantikan getFeatureStdDev() statis.
 void getCurrentStdDev(float stdOutput[3]);
+
+// BARU: reset paksa learner ke status belum-siap. Dipanggil saat pindah ke
+// slot motor yang BELUM punya baseline tersimpan -- mencegah device pakai
+// baseline motor SEBELUMNYA untuk motor BARU yang karakternya beda.
+void resetBaselineLearner();

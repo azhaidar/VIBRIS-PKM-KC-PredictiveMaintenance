@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include "config.h" // Mengunci FFT_SAMPLES agar sinkron secara arsitektur
 enum FeatureIndex { FEAT_VIBRATION = 0, FEAT_AUDIO = 1, FEAT_TEMP = 2, FEAT_COUNT = 3 };//FEAT_CURRENT = 2
+#define BEARING_TABLE_SIZE (sizeof(BEARING_TABLE)/sizeof(BEARING_TABLE[0]))
+#define BEARING_DEFAULT_INDEX 0
+
+
 // ===================================================================
 // 1. BUFFER DATA MENTAH (RAW DATA BUFFER - CORE 0 TO DSP)
 // ===================================================================
@@ -61,6 +65,11 @@ struct BearingSpec {
     float D_pitch_mm;
     float phi_deg;
     const char* label;
+
+    float oneX_hz;    // unbalance band center
+    float twoX_hz;    // misalignment band center
+    float bpfo_hz;     // outer race band center
+    float bpfi_hz;     // inner race band center
 };
 
 // Sumber angka: datasheet katalog standar seri 62xx (SKF/NSK/NTN), BUKAN
@@ -68,11 +77,9 @@ struct BearingSpec {
 // tinggi untuk laporan resmi.
 static const BearingSpec BEARING_TABLE[] = {
     // n_balls, Bd(mm), Pd(mm), phi(deg), label
-    {8, 6.35f, 25.0f, 0.0f, "Klaster A: 1-fasa 4-kutub ~1400RPM (6202)"},
-    {8, 6.75f, 28.5f, 0.0f, "Klaster B: 1-fasa 2-kutub ~2800RPM (6203)"},
+    {8, 6.35f, 25.0f, 0.0f, "Klaster A: ~1400RPM (6202)", 23.33f, 46.67f, 69.63f, 117.09f},
+    {8, 6.75f, 28.5f, 0.0f, "Klaster B: ~2800RPM (6203)", 46.67f, 93.33f, 142.46f, 230.87f},
 };
-#define BEARING_TABLE_SIZE (sizeof(BEARING_TABLE)/sizeof(BEARING_TABLE[0]))
-#define BEARING_DEFAULT_INDEX 0
 
 // PENTING: bukan 'static' -- ini DIDEKLARASIKAN di sini, tapi
 // DIDEFINISIKAN cuma sekali di FFTProcessor.cpp (lihat FIX 2).

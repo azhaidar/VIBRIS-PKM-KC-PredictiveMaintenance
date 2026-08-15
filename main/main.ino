@@ -90,6 +90,8 @@ void selectMachineBaselineSlot(int slot) {
         }
         Serial.printf("[SYSTEM] Baseline mesin #%d dimuat -- deteksi langsung aktif.\n", slot);
     } else {
+        resetBaselineLearner();
+        resetDiagnosisBandBaseline();
         Serial.printf("[SYSTEM] Belum ada baseline utk mesin #%d. Mulai kalibrasi baru (180 detik)...\n", slot);
         startCalibrationPhase();
         calibrationStartMillis = millis();

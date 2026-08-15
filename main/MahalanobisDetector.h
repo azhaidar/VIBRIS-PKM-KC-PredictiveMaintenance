@@ -61,3 +61,4 @@ const char* classifyStatusFromD2(float d2Value);
 void setDiagnosisBandBaseline(float bandMean[4], float bandStd[4]);
 void setAudioBandBaseline(float mean[AUDIO_BAND_COUNT], float std[AUDIO_BAND_COUNT]);
 float getChiSquare99();
+void resetDiagnosisBandBaseline();

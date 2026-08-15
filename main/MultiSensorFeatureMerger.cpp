@@ -57,7 +57,38 @@ void updateTemperatureFeature(float value) {
 // ===================================================================
 // PEMBACAAN GABUNGAN — dipanggil oleh MahalanobisDetector, dll.
 // ===================================================================
+// ===================================================================
+// LAJU PERUBAHAN SUHU (dT/dt) -- fitur ke-3 Mahalanobis, gantikan suhu absolut.
+// Alasan: suhu absolut naik wajar saat motor manasin (bukan anomali),
+// bikin D2 meledak. Yang menandai bahaya itu suhu MELONJAK MENDADAK
+// (dT besar), bukan suhu tinggi. EMA smoothing meredam noise dT.
+// ===================================================================
+static float lastTempForRate = -999.0f;   // -999 = belum ada bacaan sebelumnya
+static uint32_t lastTempRateTime = 0;
+static float smoothedTempRate = 0.0f;
+#define TEMP_RATE_EMA_ALPHA 0.2f   // 0-1: makin kecil makin halus (tuning di sini)
 
+float getSmoothedTempRate(float currentTemp) {
+    uint32_t now = millis();
+
+    if (lastTempForRate < -900.0f) {
+        // bacaan pertama: belum bisa hitung laju, anggap 0
+        lastTempForRate = currentTemp;
+        lastTempRateTime = now;
+        return 0.0f;
+    }
+
+    float dtSeconds = (now - lastTempRateTime) / 1000.0f;
+    if (dtSeconds < 0.001f) return smoothedTempRate;   // hindari bagi nol
+
+    float rawRate = (currentTemp - lastTempForRate) / dtSeconds;   // derajat/detik
+    // EMA smoothing: rate baru = alpha*rawRate + (1-alpha)*rate lama
+    smoothedTempRate = TEMP_RATE_EMA_ALPHA * rawRate + (1.0f - TEMP_RATE_EMA_ALPHA) * smoothedTempRate;
+
+    lastTempForRate = currentTemp;
+    lastTempRateTime = now;
+    return smoothedTempRate;
+}
 bool getMergedFeatures(SensorFeatures *output) {
     ensureMutexInitialized();
 

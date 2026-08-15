@@ -45,3 +45,5 @@ void updateAudioFeature(float rmsValue);
 void updateCurrentFeature(float rmsValue);
 void updateTemperatureFeature(float value);
 bool getMergedFeatures(SensorFeatures *output);
+float getSmoothedTempRate(float currentTemp);
+

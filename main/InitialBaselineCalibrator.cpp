@@ -3,6 +3,7 @@
 #include "CovarianceMatrixSolver.h"
 #include "InitialBaselineCalibrator.h"
 #include "CovarianceMatrixSolver.h"
+#include "MultiSensorFeatureMerger.h"
 #include <Preferences.h>
 #include <Arduino.h>
 #include <Preferences.h>
@@ -181,7 +182,7 @@ bool addCalibrationSample(SensorFeatures sample) {
 
     calibrationBuffer[calibrationSampleCount][FEAT_VIBRATION] = sample.rms_getaran;
     calibrationBuffer[calibrationSampleCount][FEAT_AUDIO]     = sample.rms_suara;
-    calibrationBuffer[calibrationSampleCount][FEAT_TEMP]      = sample.suhu;
+    calibrationBuffer[calibrationSampleCount][FEAT_TEMP]      = getSmoothedTempRate(sample.suhu);
     calibrationSampleCount++;
     return true;
 }
