@@ -23,13 +23,14 @@ except ImportError:
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
     QGridLayout, QStackedWidget, QFrame, QListWidget, QComboBox, QMessageBox,
-    QSlider, QSizePolicy, QProgressBar)
-from PyQt5.QtCore import QTimer, Qt, QPoint
+    QSlider, QSizePolicy, QProgressBar, QLineEdit
+)
+from PyQt5.QtCore import QTimer, Qt, QPoint, QEvent
 from PyQt5.QtGui import QFont, QPainter, QLinearGradient, QColor, QPolygon, QPen, QBrush
 import pyqtgraph as pg
 
 # ===================== KONFIGURASI OPERASIONAL =====================
-SERIAL_PORT = 'COM6'
+SERIAL_PORT = '/dev/ttyACM0'
 BAUD_RATE = 115200
 LOG_DIR = "logs"
 if not os.path.exists(LOG_DIR):
@@ -142,9 +143,11 @@ class GradientGauge(QWidget):
 class Dashboard(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("HMI | Rotating Machinery Detection System")
+        self.setWindowTitle("HMI | Rotating Machinery Detection System (Integrated)")
+        
+        # PERBAIKAN POPUP TASKBAR: Tambahkan flag Qt.Window agar dialog/popup muncul di atas aplikasi secara benar
         self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.X11BypassWindowManagerHint
+            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
         self.setFixedSize(480, 320)
         self.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; font-family: Arial;")
@@ -164,15 +167,27 @@ class Dashboard(QWidget):
         self.temp_buffer = deque(maxlen=self.data_len)
         self.rpm_buffer = deque(maxlen=self.data_len)
         self.d2_buffer = deque(maxlen=self.data_len)
+        
+        self.history_window_size = 100
+        self.hist_v_buf = deque(maxlen=self.history_window_size)
+        self.hist_a_buf = deque(maxlen=self.history_window_size)
+        self.hist_temp_buf = deque(maxlen=self.history_window_size)
+        self.hist_vx_buf = deque(maxlen=self.history_window_size)
+        self.hist_vy_buf = deque(maxlen=self.history_window_size)
+        self.hist_vz_buf = deque(maxlen=self.history_window_size)
+        self.hist_rpm_buf = deque(maxlen=self.history_window_size)
+        self.hist_d2_buf = deque(maxlen=self.history_window_size)
+
         self.tick = 0
         self.last_processed_tick = 0
         self.last_raw_line = ""
+        self.last_packet_time = time.time()
+        self.packet_loss_flag = False
+        self.last_auto_snapshot_status = "normal"
 
-        # Buffer spektrum FFT
         self.fft_hz_buffer = []
         self.fft_mag_buffer = []
 
-        # Buffer parameter AI & Prediktif
         self.current_health_score = 0.0
         self.current_trend = "Menunggu"
         self.current_servis = "Menunggu"
@@ -215,10 +230,10 @@ class Dashboard(QWidget):
         self.serial_connected = False
 
         self.machines = [
-            {"name": "Blower Industri UMKM", "icon": "🌀", "bearing_cmd": "B"},
-            {"name": "Motor Induksi Pompa Air", "icon": "💧", "bearing_cmd": "B"},
-            {"name": "Kompresor Production", "icon": "🗜️", "bearing_cmd": "B"},
-            {"name": "Mesin Blender", "icon": "🥤", "bearing_cmd": "N"},
+            {"name": "Blower Industri UMKM", "icon": "🌀", "bearing_cmd": "B", "rpm_cluster": "Medium (1000-3000 RPM)", "baseline_d2": 9.49},
+            {"name": "Motor Induksi Pompa Air", "icon": "💧", "bearing_cmd": "B", "rpm_cluster": "Low (< 1000 RPM)", "baseline_d2": 8.00},
+            {"name": "Kompresor Production", "icon": "🗜️", "bearing_cmd": "B", "rpm_cluster": "High (> 3000 RPM)", "baseline_d2": 11.00},
+            {"name": "Mesin Blender", "icon": "🥤", "bearing_cmd": "N", "rpm_cluster": "High (> 3000 RPM)", "baseline_d2": 12.50},
         ]
         self.selected_machine_idx = -1
         self.machine_delete_mode = False
@@ -397,7 +412,6 @@ class Dashboard(QWidget):
         _tidy_plot(self.graph_v, "Vibration (G)")
         layout_grafik_grid.addWidget(self.graph_v, 1, 0)
         
-        # Panel AI Prediktif di kanan bawah (menggantikan Arus)
         self.panel_ai = QFrame()
         self.panel_ai.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border-radius: 4px;")
         lay_ai = QVBoxLayout(self.panel_ai)
@@ -658,12 +672,12 @@ class Dashboard(QWidget):
 
     def _page_machine_select(self):
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        self.machine_page_layout = QVBoxLayout(page)
+        self.machine_page_layout.setContentsMargins(6, 6, 6, 6)
+        self.machine_page_layout.setSpacing(6)
 
         top_row = QHBoxLayout()
-        lbl_title = QLabel("Pilih Mesin Target")
+        lbl_title = QLabel("Pilih Mesin Target & Klaster RPM")
         lbl_title.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {COL_TEXT_LIGHT};")
         top_row.addWidget(lbl_title)
         top_row.addStretch(1)
@@ -673,12 +687,12 @@ class Dashboard(QWidget):
         self.btn_machine_delete_mode.setStyleSheet(self._delete_mode_btn_style(False))
         self.btn_machine_delete_mode.clicked.connect(self._toggle_machine_delete_mode)
         top_row.addWidget(self.btn_machine_delete_mode)
-        layout.addLayout(top_row)
+        self.machine_page_layout.addLayout(top_row)
 
-        self.lbl_machine_hint = QLabel("Klik kotak mesin untuk memilih sebagai target aktif.")
+        self.lbl_machine_hint = QLabel("Klik kotak mesin untuk memilih target aktif beserta klaster RPM-nya.")
         self.lbl_machine_hint.setStyleSheet(f"font-size: 8px; color: {COL_TEXT_DIM};")
         self.lbl_machine_hint.setWordWrap(True)
-        layout.addWidget(self.lbl_machine_hint)
+        self.machine_page_layout.addWidget(self.lbl_machine_hint)
 
         self.machine_grid = QGridLayout()
         self.machine_grid.setSpacing(6)
@@ -686,7 +700,7 @@ class Dashboard(QWidget):
             self.machine_grid.setColumnStretch(c, 1)
         for r in range(2):
             self.machine_grid.setRowStretch(r, 1)
-        layout.addLayout(self.machine_grid, 1)
+        self.machine_page_layout.addLayout(self.machine_grid, 1)
 
         self._rebuild_machine_grid()
         return page
@@ -704,7 +718,7 @@ class Dashboard(QWidget):
         self.lbl_machine_hint.setText(
             "MODE HAPUS AKTIF -- klik kotak mesin untuk menghapusnya."
             if self.machine_delete_mode else
-            "Klik kotak mesin untuk memilih sebagai target aktif."
+            "Klik kotak mesin untuk memilih target aktif beserta klaster RPM-nya."
         )
 
     def _make_machine_card(self, idx):
@@ -712,30 +726,39 @@ class Dashboard(QWidget):
         btn.setFixedHeight(76)
         lay = QVBoxLayout(btn)
         lay.setContentsMargins(2, 4, 2, 4)
-        lay.setSpacing(2)
+        lay.setSpacing(1)
 
         if idx is None:
             lbl_icon = QLabel("➕")
             lbl_name = QLabel("Tambah Mesin")
-            btn.clicked.connect(self._add_machine_dialog)
+            btn.clicked.connect(self._activate_inline_add_machine)
             border_col = COL_TEXT_DIM
             bg = "transparent"
+            lbl_cluster = QLabel("")
         else:
             m = self.machines[idx]
             lbl_icon = QLabel(m["icon"])
             lbl_name = QLabel(m["name"])
+            cluster_text = m.get("rpm_cluster", "Medium (1000-3000 RPM)")
+            lbl_cluster = QLabel(f"⚡ {cluster_text}")
             btn.clicked.connect(lambda checked, i=idx: self._on_machine_card_clicked(i))
             selected = (idx == self.selected_machine_idx)
             border_col = COL_ACCENT if selected else "#2a3542"
             bg = COL_ACCENT_DIM if selected else COL_PANEL_DARK
 
         lbl_icon.setAlignment(Qt.AlignCenter)
-        lbl_icon.setStyleSheet("font-size: 22px; background: transparent; border: none;")
+        lbl_icon.setStyleSheet("font-size: 18px; background: transparent; border: none;")
+        
         lbl_name.setAlignment(Qt.AlignCenter)
         lbl_name.setWordWrap(True)
-        lbl_name.setStyleSheet(f"font-size: 8px; color: {COL_TEXT_LIGHT}; background: transparent; border: none;")
+        lbl_name.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_TEXT_LIGHT}; background: transparent; border: none;")
+
+        lbl_cluster.setAlignment(Qt.AlignCenter)
+        lbl_cluster.setStyleSheet(f"font-size: 7px; color: {COL_ACCENT}; background: transparent; border: none;")
+
         lay.addWidget(lbl_icon)
         lay.addWidget(lbl_name)
+        lay.addWidget(lbl_cluster)
 
         btn.setStyleSheet(
             f"QPushButton {{ background-color: {bg}; border: 1px solid {border_col}; border-radius: 5px; }}"
@@ -758,21 +781,84 @@ class Dashboard(QWidget):
             add_pos = len(self.machines)
             self.machine_grid.addWidget(self._make_machine_card(None), add_pos // 3, add_pos % 3)
 
-    def _add_machine_dialog(self):
-        from PyQt5.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, "Tambah Mesin", "Nama mesin baru:")
-        if not ok or not name.strip():
+    def _activate_inline_add_machine(self):
+        while self.machine_grid.count():
+            item = self.machine_grid.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        form_frame = QFrame()
+        form_frame.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border: 1px solid {COL_ACCENT}; border-radius: 5px;")
+        f_lay = QVBoxLayout(form_frame)
+        f_lay.setContentsMargins(4, 4, 4, 4)
+        f_lay.setSpacing(2)
+
+        lbl_nm = QLabel("Nama Mesin Baru:")
+        lbl_nm.setStyleSheet(f"color: {COL_TEXT_LIGHT}; font-size: 8px; background: transparent;")
+        f_lay.addWidget(lbl_nm)
+
+        self.inline_name_input = QLineEdit()
+        self.inline_name_input.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; border: 1px solid {COL_TEXT_DIM}; padding: 2px; font-size: 8px;")
+        f_lay.addWidget(self.inline_name_input)
+
+        h_sub = QHBoxLayout()
+        self.inline_icon_combo = QComboBox()
+        self.inline_icon_combo.addItems(["⚙️", "🌀", "💧", "🗜️", "🥤", "🔥", "❄️", "🏭"])
+        self.inline_icon_combo.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; font-size: 8px; selection-background-color: {COL_ACCENT};")
+        h_sub.addWidget(self.inline_icon_combo)
+
+        self.inline_bearing_combo = QComboBox()
+        self.inline_bearing_combo.addItems(["Rolling", "Bushing"])
+        self.inline_bearing_combo.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; font-size: 8px; selection-background-color: {COL_ACCENT};")
+        h_sub.addWidget(self.inline_bearing_combo)
+        f_lay.addLayout(h_sub)
+
+        lbl_cl = QLabel("Klaster RPM:")
+        lbl_cl.setStyleSheet(f"color: {COL_TEXT_LIGHT}; font-size: 8px; background: transparent;")
+        f_lay.addWidget(lbl_cl)
+
+        self.inline_cluster_combo = QComboBox()
+        self.inline_cluster_combo.addItems(["Low (< 1000 RPM)", "Medium (1000-3000 RPM)", "High (> 3000 RPM)"])
+        self.inline_cluster_combo.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; font-size: 8px; selection-background-color: {COL_ACCENT};")
+        f_lay.addWidget(self.inline_cluster_combo)
+
+        btn_row = QHBoxLayout()
+        btn_ok = QPushButton("Simpan")
+        btn_cancel = QPushButton("Batal")
+        btn_ok.setStyleSheet(f"background-color: {COL_ACCENT}; color: #000; font-weight: bold; font-size: 8px; padding: 2px;")
+        btn_cancel.setStyleSheet(f"background-color: #444; color: #fff; font-size: 8px; padding: 2px;")
+        
+        btn_ok.clicked.connect(self._save_inline_machine)
+        btn_cancel.clicked.connect(self._rebuild_machine_grid)
+        
+        btn_row.addWidget(btn_ok)
+        btn_row.addWidget(btn_cancel)
+        f_lay.addLayout(btn_row)
+
+        self.machine_grid.addWidget(form_frame, 0, 0, 2, 3)
+        self.lbl_machine_hint.setText("Masukkan detail mesin dan klaster RPM langsung di atas.")
+
+    def _save_inline_machine(self):
+        name = self.inline_name_input.text().strip()
+        if not name:
             return
-        icon_choices = ["⚙️", "🌀", "💧", "🗜️", "🥤", "🔥", "❄️", "🛠️", "🚜", "🏭"]
-        icon, ok2 = QInputDialog.getItem(self, "Pilih Ikon", "Ikon untuk mesin ini:", icon_choices, 0, False)
-        if not ok2:
-            icon = "⚙️"
-        bearing_choices = ["Rolling Bearing (umum)", "Bushing / Tanpa Rolling Bearing"]
-        bearing_pick, ok3 = QInputDialog.getItem(
-            self, "Tipe Bearing", "Jenis bantalan poros mesin ini:", bearing_choices, 0, False
-        )
-        bearing_cmd = "N" if (ok3 and bearing_pick == bearing_choices[1]) else "B"
-        self.machines.append({"name": name.strip(), "icon": icon, "bearing_cmd": bearing_cmd})
+        icon = self.inline_icon_combo.currentText()
+        bearing_type = "N" if self.inline_bearing_combo.currentIndex() == 1 else "B"
+        rpm_cluster = self.inline_cluster_combo.currentText()
+        
+        baseline_default = 9.49
+        if "Low" in rpm_cluster: baseline_default = 8.00
+        elif "High" in rpm_cluster: baseline_default = 12.00
+
+        self.machines.append({
+            "name": name, 
+            "icon": icon, 
+            "bearing_cmd": bearing_type, 
+            "rpm_cluster": rpm_cluster,
+            "baseline_d2": baseline_default
+        })
+        self.lbl_machine_hint.setText("Klik kotak mesin untuk memilih target aktif beserta klaster RPM-nya.")
         self._rebuild_machine_grid()
 
     def _on_machine_card_clicked(self, idx):
@@ -794,7 +880,7 @@ class Dashboard(QWidget):
 
         self.selected_machine_idx = idx
         m = self.machines[idx]
-        self.lbl_machine_active.setText(f"{m['icon']}  {m['name']}")
+        self.lbl_machine_active.setText(f"{m['icon']}  {m['name']} ({m.get('rpm_cluster', 'Medium')})")
         self._send_command(m["bearing_cmd"])
         self._send_command(str(idx)) 
         self._rebuild_machine_grid()
@@ -1039,9 +1125,14 @@ class Dashboard(QWidget):
 
                 raw = self.ser.readline()
                 if not raw:
+                    if time.time() - self.last_packet_time > 2.5:
+                        self.packet_loss_flag = True
                     continue
-                line = raw.decode('utf-8', errors='ignore').strip()
 
+                self.last_packet_time = time.time()
+                self.packet_loss_flag = False
+
+                line = raw.decode('utf-8', errors='ignore').strip()
                 print("SERIAL >>>", line)
 
                 if not line.startswith("{"):
@@ -1086,6 +1177,20 @@ class Dashboard(QWidget):
                 self.rpm_buffer.append(self.current_rpm)
                 self.d2_buffer.append(self.current_d2)
 
+                self.hist_v_buf.append(self.current_v)
+                self.hist_a_buf.append(self.current_a)
+                self.hist_temp_buf.append(self.current_temp)
+                self.hist_vx_buf.append(self.current_vx)
+                self.hist_vy_buf.append(self.current_vy)
+                self.hist_vz_buf.append(self.current_vz)
+                self.hist_rpm_buf.append(self.current_rpm)
+                self.hist_d2_buf.append(self.current_d2)
+
+                current_st_lower = (self.current_status_device or "").strip().lower()
+                if current_st_lower in ("waspada", "bahaya") and self.last_auto_snapshot_status == "normal":
+                    self._trigger_auto_event_snapshot(current_st_lower)
+                self.last_auto_snapshot_status = current_st_lower
+
                 if self.recording and self.csv_writer:
                     elapsed = time.perf_counter() - self.record_start_time
                     machine_name = (self.machines[self.selected_machine_idx]["name"]
@@ -1107,6 +1212,32 @@ class Dashboard(QWidget):
                 self.current_v = self.current_a = self.current_temp = None
                 time.sleep(2)
 
+    def _trigger_auto_event_snapshot(self, status_severity_str):
+        try:
+            snapshot_filename = os.path.join(LOG_DIR, f"snapshot_{status_severity_str.upper()}_{datetime.now().strftime('%d%m%Y_%H%M%S')}.csv")
+            with open(snapshot_filename, 'w', newline='') as sf:
+                sw = csv.writer(sf)
+                sw.writerow([
+                    'snapshot_index', 'rms_v', 'rms_a', 'temp', 'vib_x', 'vib_y', 'vib_z', 
+                    'rpm', 'mahalanobis_d2', 'triggered_status'
+                ])
+                for idx_snap in range(len(self.hist_v_buf)):
+                    sw.writerow([
+                        idx_snap,
+                        self.hist_v_buf[idx_snap],
+                        self.hist_a_buf[idx_snap],
+                        self.hist_temp_buf[idx_snap],
+                        self.hist_vx_buf[idx_snap],
+                        self.hist_vy_buf[idx_snap],
+                        self.hist_vz_buf[idx_snap],
+                        self.hist_rpm_buf[idx_snap],
+                        self.hist_d2_buf[idx_snap],
+                        status_severity_str
+                    ])
+            print(f"[AUTO-SNAPSHOT] Berhasil merekam forensik anomali ke: {snapshot_filename}")
+        except Exception as ex:
+            print(f"[AUTO-SNAPSHOT ERROR] Gagal menulis file snapshot: {ex}")
+
     def _send_command(self, cmd_char):
         if self.ser is not None and self.ser.is_open:
             try:
@@ -1117,6 +1248,7 @@ class Dashboard(QWidget):
             print(f"[SERIAL] Command '{cmd_char}' tidak terkirim -- belum tersambung ke ESP32.")
             
     def _confirm_reboot_esp(self):
+        # PERBAIKAN POPUP: Tambahkan 'self' sebagai parameter parent agar muncul persis di atas aplikasi, bukan di taskbar
         reply = QMessageBox.question(
             self, "Konfirmasi Reboot",
             "Reboot ESP32 sekarang?\n\nKoneksi akan terputus ~2-3 detik selagi device restart.",
@@ -1127,6 +1259,8 @@ class Dashboard(QWidget):
             
     def _apply_header_alarm_state(self, status_key):
         color = {"bahaya": COL_BAD, "waspada": COL_WARN}.get(status_key, COL_ACCENT)
+        if self.packet_loss_flag:
+            color = COL_WARN
         self.header_frame.setStyleSheet(
             f"background-color: {COL_HEADER_BG}; border-radius: 4px; "
             f"border-bottom: 2px solid {color};"
@@ -1157,6 +1291,9 @@ class Dashboard(QWidget):
         key = (device_status or "").strip().lower()
         if key in status_map:
             title, color, desc, sys_txt = status_map[key]
+            if self.packet_loss_flag:
+                sys_txt = "● EMI / PACKET LOSS WARNING"
+                color = COL_WARN
             self.lbl_sys_status.setText(sys_txt)
             self.lbl_sys_status.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {color};")
             self.lbl_diag_desc_summary.setText(f"{title} - {desc}")
@@ -1171,6 +1308,10 @@ class Dashboard(QWidget):
         else:
             status_txt, status_col = "● SYSTEM ONLINE", COL_OK
             desc = "STATUS: NORMAL - Seluruh parameter berjalan aman."
+
+        if self.packet_loss_flag:
+            status_txt = "● EMI / PACKET LOSS WARNING"
+            status_col = COL_WARN
 
         self.lbl_sys_status.setText(status_txt)
         self.lbl_sys_status.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {status_col};")
@@ -1191,15 +1332,20 @@ class Dashboard(QWidget):
 
     def _show_debug_info(self):
         port_info = self.ser.port if (self.ser is not None) else "(belum ada koneksi)"
+        selected_machine_name = self.machines[self.selected_machine_idx]["name"] if self.selected_machine_idx >= 0 else "Belum dipilih"
+        active_baseline = self.machines[self.selected_machine_idx].get("baseline_d2", 9.49) if self.selected_machine_idx >= 0 else "N/A"
         info = (
             f"Status koneksi   : {'TERSAMBUNG' if self.serial_connected else 'TIDAK TERSAMBUNG'}\n"
             f"Port serial      : {port_info}\n"
             f"Baud rate        : {BAUD_RATE}\n"
+            f"Packet Loss Flag : {'TERDETEKSI (EMI Noise)' if self.packet_loss_flag else 'Aman'}\n"
+            f"Mesin Aktif      : {selected_machine_name} (Baseline D²: {active_baseline})\n"
             f"Baris JSON akhir : {self.last_raw_line or '(belum ada data masuk)'}\n"
             f"Vib/Snd/Tmp      : {self.current_v}, {self.current_a}, {self.current_temp}\n"
             f"RPM / D²         : {self.current_rpm}, {self.current_d2}\n"
             f"Status firmware  : {self.current_status_device or '-'}"
         )
+        # PERBAIKAN POPUP: Tambahkan parent (self)
         QMessageBox.information(self, "DEBUG - Info Koneksi & Data Terakhir", info)
 
     def _render_session_summary(self):
@@ -1217,7 +1363,7 @@ class Dashboard(QWidget):
         self.date_lbl.setText(now_dt.strftime("%d/%m/%Y"))
 
         self.lbl_conn_dot.setStyleSheet(
-            f"font-size: 12px; font-weight: bold; color: {COL_OK if self.serial_connected else COL_BAD};"
+            f"font-size: 12px; font-weight: bold; color: {COL_OK if (self.serial_connected and not self.packet_loss_flag) else COL_WARN};"
         )
 
         if self.current_v is not None:
@@ -1496,16 +1642,28 @@ class Dashboard(QWidget):
                 f"Total {len(data_rows)} baris data, siap dibuka di Microsoft Excel."
             )
         except Exception as e:
-            QMessageBox.critical(self, "Export Gagal", f"Terjadi kesalahan saat export ke Excel:\n{e}")
+            QMessageBox.critical(self, "Export Global Gagal", f"Terjadi kesalahan saat export ke Excel:\n{e}")
 
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            if self.csv_file:
-                self.csv_file.close()
-            self.close()
+    def closeEvent(self, event):
+        if self.csv_file:
+            self.csv_file.close()
+        event.accept()
+
+# ===================== GLOBAL APP EVENT FILTER UNTUK ESC =====================
+class GlobalEscHandler(QApplication):
+    def notify(self, receiver, event):
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+            for widget in self.topLevelWidgets():
+                if isinstance(widget, Dashboard):
+                    if widget.csv_file:
+                        widget.csv_file.close()
+                    widget.close()
+                    return True
+        return super().notify(receiver, event)
 
 if __name__ == '__main__':
-    app = QApplication(sys.argv)
+    # Menggunakan GlobalEscHandler agar tombol ESC dijamin tertangkap instan di level sistem
+    app = GlobalEscHandler(sys.argv)
     db = Dashboard()
     db.show()
     db.raise_()
