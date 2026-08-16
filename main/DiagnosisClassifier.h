@@ -59,4 +59,4 @@ sendiri.
 
 void Diagnosis_Classify(float bandEnergies[4], float bandBaselineMean[4],
                           float bandBaselineStd[4], char *labelOutput,
-                          float *confidenceOutput);
+                          float *confidenceOutput, uint8_t *flagsOutput);

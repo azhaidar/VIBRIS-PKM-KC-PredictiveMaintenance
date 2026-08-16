@@ -75,3 +75,4 @@
                                    // BUKAN lagi RPM real-time. Lihat FFTProcessor.cpp.
 #define BAND_WINDOW_PERCENT 0.10f  // toleransi ±10% di sekitar frekuensi fixed
 #define DEBUG_VERBOSE 0   // 0 = sesi ambil data resmi (JSON bersih), 1 = debug manual
+#define CHECK_SESSION_DURATION_MS 60000UL   // 1 menit nanti ubah terserah kalian dah anj

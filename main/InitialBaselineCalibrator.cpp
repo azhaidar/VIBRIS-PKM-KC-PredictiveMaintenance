@@ -308,3 +308,23 @@ void setFeatureStdDev(float stdDev[4]) {
 void getFeatureStdDev(float stdDevOutput[4]) {
     for (int i = 0; i < 3; i++) stdDevOutput[i] = featureStdDev[i];
 }
+
+void deleteBaselineFromFlash(int slot) {
+    char ns[16];
+    snprintf(ns, sizeof(ns), "baseline%d", slot);
+    flashStorage.begin(ns, false);
+    flashStorage.clear();
+    flashStorage.end();
+
+    snprintf(ns, sizeof(ns), "bandbase%d", slot);
+    flashStorage.begin(ns, false);
+    flashStorage.clear();
+    flashStorage.end();
+
+    snprintf(ns, sizeof(ns), "audiobase%d", slot);
+    flashStorage.begin(ns, false);
+    flashStorage.clear();
+    flashStorage.end();
+
+    Serial.printf("[Calibrator] Baseline mesin #%d DIHAPUS dari flash.\n", slot);
+}

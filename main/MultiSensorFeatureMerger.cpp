@@ -32,6 +32,9 @@ static void writeFeature(FeatureIndex idx, float value) {
     // Kalau mutex gagal diambil dalam 50ms, update dilewati siklus ini.
     // Lebih aman drop satu sample daripada block task sensor selamanya.
 }
+void updateKurtosisFeature(float value) {
+    writeFeature(FEAT_KURTOSIS, value);
+}
 
 // ===================================================================
 // API PUBLIK — dipanggil oleh masing-masing Driver
@@ -110,6 +113,7 @@ bool getMergedFeatures(SensorFeatures *output) {
     output->rms_suara   = latestFeatures[FEAT_AUDIO];
     output->arus        = 0.0f;
     output->suhu        = latestFeatures[FEAT_TEMP];
+    output->kurtosis    = latestFeatures[FEAT_KURTOSIS];
     output->valid       = allFresh;
 
     xSemaphoreGive(mergerMutex);

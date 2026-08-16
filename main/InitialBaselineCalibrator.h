@@ -54,3 +54,5 @@ bool addBandEnergyCalibrationSample(float bandEnergies[4]);
 void computeBandEnergyBaseline(float meanOutput[4], float stdOutput[4]);
 void saveBandBaselineToFlash(int slot, float mean[4], float std[4]);
 bool loadBandBaselineFromFlash(int slot, float meanOutput[4], float stdOutput[4]);
+
+void deleteBaselineFromFlash(int slot);

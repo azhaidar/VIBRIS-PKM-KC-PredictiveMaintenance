@@ -5,10 +5,9 @@
 // Ambang sama seperti DiagnosisClassifier getaran (Z-score 2.0), untuk
 // konsistensi lintas modul -- lihat BAB 2.6 proposal.
 #define AUDIO_Z_SCORE_THRESHOLD 2.0f
-
 void DriverAudioDiagnosis_Classify(float bandEnergies[3], float bandBaselineMean[3],
                               float bandBaselineStd[3], char *labelOutput,
-                              float *confidenceOutput) {
+                              float *confidenceOutput, uint8_t *flagsOutput) {
     // Index 0: LOW  -> rumble mekanis frekuensi rendah
     // Index 1: MID  -> baseline dengungan motor normal
     // Index 2: HIGH -> gesekan/decitan frekuensi tinggi
@@ -17,16 +16,20 @@ void DriverAudioDiagnosis_Classify(float bandEnergies[3], float bandBaselineMean
     float zScores[3];
     float maxZ = -999.0f;
     int maxIdx = 0;
+    uint8_t flags = 0; 
 
     for (int i = 0; i < 3; i++) {
         float sd = (bandBaselineStd[i] > 0.0001f) ? bandBaselineStd[i] : 1.0f;
         zScores[i] = (bandEnergies[i] - bandBaselineMean[i]) / sd;
+        if (zScores[i] > AUDIO_Z_SCORE_THRESHOLD) {  
+            flags |= (1 << i);                        
+        }
         if (zScores[i] > maxZ) {
             maxZ = zScores[i];
             maxIdx = i;
         }
     }
-
+    *flagsOutput = flags; 
     if (maxZ < AUDIO_Z_SCORE_THRESHOLD) {
         strcpy(labelOutput, "NORMAL");
         *confidenceOutput = 0.0f;

@@ -23,34 +23,35 @@ harus ada nanti saat mulai coding):
 
 void Diagnosis_Classify(float bandEnergies[4], float bandBaselineMean[4],
                         float bandBaselineStd[4], char *labelOutput,
-                        float *confidenceOutput) 
+                        float *confidenceOutput, uint8_t *flagsOutput)  
 {
     // Indeks pita frekuensi berdasarkan arti fisik (cetak biru proposal)
     // Index 0: 1x RPM -> Unbalance
     // Index 1: 2x RPM -> Misalignment
     // Index 2: BPFO   -> Outer Race Bearing Fault
     // Index 3: BPFI   -> Inner Race Bearing Fault
-
+    const float Z_SCORE_THRESHOLD = 2.0f;
     float zScores[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float maxZScore = -999.0f;
     int maxIndex = 0;
-
     // 1. Hitung Z-Score untuk tiap band secara independen
+    uint8_t flags = 0;
     for (int i = 0; i < 4; i++) {
         // Proteksi pembagian dengan nol jika standar deviasi baseline tidak valid
         float stdDev = (bandBaselineStd[i] > 0.0001f) ? bandBaselineStd[i] : 1.0f;
         
         zScores[i] = (bandEnergies[i] - bandBaselineMean[i]) / stdDev;
-
+        if (zScores[i] > Z_SCORE_THRESHOLD) {      // BARU: cek tiap band, bukan cuma yang max
+            flags |= (1 << i);                      // BARU: nyalakan bit sesuai index band
+        }
         // 2. Cari nilai penyimpangan (Z-Score) tertinggi
         if (zScores[i] > maxZScore) {
             maxZScore = zScores[i];
             maxIndex = i;
         }
     }
-
+    *flagsOutput = flags;   // BARU: keluarkan bitmask lengkap
     // 3. Evaluasi ambang batas berdasarkan parameter Z-Score di BAB 2.6
-    const float Z_SCORE_THRESHOLD = 2.0f;
 
     if (maxZScore < Z_SCORE_THRESHOLD) {
         strcpy(labelOutput, "NORMAL");

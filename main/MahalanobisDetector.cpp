@@ -1,8 +1,5 @@
-
-
-// Nilai kritis chi-square, df=4 (4 fitur sensor), sesuai dokumentasi header:
-// 95% confidence = 9.49, 99% confidence = 13.28. Standar statistik, bukan tebakan.
-
+// Nilai kritis chi-square, df=3 (3 fitur sensor: getaran, suara, laju suhu):
+// 95% confidence = 7.815, 99% confidence = 11.345. Standar statistik, bukan tebakan.
 // Baseline energi per-band dipakai DiagnosisClassifier (lihat header:
 // modul ini menjawab APAKAH menyimpang, DiagnosisClassifier menjawab DI
 // BAGIAN MANA). Disuplai dari luar lewat setDiagnosisBandBaseline() --
@@ -81,8 +78,27 @@ const char* classifyStatusFromD2(float d2Value) {
     if (d2Value <= CHI_SQUARE_99) return "Waspada";
     return "Bahaya";
 }
+static char stableStatusLabel[16] = "Normal";
+static char pendingStatusLabel[16] = "Normal";
+static int  statusStreak = 0;
+#define STATUS_CONFIRM_STREAK 5
 
-DetectionResult runDetectionCycle() {
+const char* getDebounceStatus(const char* newLabel) {
+    if (strcmp(newLabel, pendingStatusLabel) == 0) {
+        statusStreak++;
+    } else {
+        strncpy(pendingStatusLabel, newLabel, sizeof(pendingStatusLabel) - 1);
+        pendingStatusLabel[sizeof(pendingStatusLabel) - 1] = '\0';
+        statusStreak = 1;
+    }
+    if (statusStreak >= STATUS_CONFIRM_STREAK) {
+        strncpy(stableStatusLabel, pendingStatusLabel, sizeof(stableStatusLabel) - 1);
+        stableStatusLabel[sizeof(stableStatusLabel) - 1] = '\0';
+    }
+    return stableStatusLabel;
+}
+// State debounce -- taruh di scope file, sejajar dengan diagBandMean dkk
+    DetectionResult runDetectionCycle() {
     DetectionResult result;
     static unsigned long baselineReadyTimestamp = 0;
     static bool wasReady = false;
@@ -114,9 +130,13 @@ DetectionResult runDetectionCycle() {
         result.status_label[sizeof(result.status_label) - 1] = '\0';
         return result;
     }
+    static float smoothedRms = 0.0f, smoothedRoughness = 0.0f;
+    #define FEATURE_SMOOTH_ALPHA 0.3f
+    smoothedRms       = FEATURE_SMOOTH_ALPHA * merged.rms_getaran + (1-FEATURE_SMOOTH_ALPHA) * smoothedRms;
+    smoothedRoughness = FEATURE_SMOOTH_ALPHA * Scheduler_GetLatestRoughness() + (1-FEATURE_SMOOTH_ALPHA) * smoothedRoughness;
 
     float currentFeatures[3] = {
-        merged.rms_getaran, Scheduler_GetLatestRoughness(), getSmoothedTempRate(merged.suhu)
+        smoothedRms, smoothedRoughness, getSmoothedTempRate(merged.suhu)
     };
 
     float baselineMean[3];
@@ -135,14 +155,16 @@ DetectionResult runDetectionCycle() {
     }
 
     float d2 = computeMahalanobisQuadraticForm(currentFeaturesStd, zeroMean, sigmaInverse);
-    const char* label = classifyStatusFromD2(d2);
+    float currentRpm = Scheduler_GetLatestRPM();
+    const char* rawLabel = (currentRpm <= 0.0f) ? "Diam" : classifyStatusFromD2(d2);
+    const char* label = getDebounceStatus(rawLabel);
     bool isNormal = (strcmp(label, "Normal") == 0);
 
     // GANTI: currentFeaturesStd -> currentFeatures (RAW) -- sesuai kontrak
     // updateBaselineIfNormal() yang sudah direvisi di AdaptiveBaselineLearner.cpp
     updateBaselineIfNormal(currentFeatures, isNormal);
 
-    result.rpm_estimated = Scheduler_GetLatestRPM();
+    result.rpm_estimated = currentRpm;
     result.mahalanobis_D2 = d2;
     strncpy(result.status_label, label, sizeof(result.status_label) - 1);
     result.status_label[sizeof(result.status_label) - 1] = '\0';
@@ -156,8 +178,9 @@ DetectionResult runDetectionCycle() {
 
         char diagLabel[20];
         float diagConfidence = 0.0f;
-        Diagnosis_Classify(bandEnergies, diagBandMean, diagBandStd, diagLabel, &diagConfidence);
 
+        uint8_t diagFlags = 0;
+        Diagnosis_Classify(bandEnergies, diagBandMean, diagBandStd, diagLabel, &diagConfidence, &diagFlags);
         strncpy(result.diagnosis_label, diagLabel, sizeof(result.diagnosis_label) - 1);
         result.diagnosis_label[sizeof(result.diagnosis_label) - 1] = '\0';
         result.diagnosis_confidence = diagConfidence;
@@ -175,7 +198,8 @@ DetectionResult runDetectionCycle() {
 
         char audioLabel[20];
         float audioConf = 0.0f;
-        DriverAudioDiagnosis_Classify(audioBandEnergies, audioBandMean, audioBandStd, audioLabel, &audioConf);
+        uint8_t audioFlags = 0; 
+        DriverAudioDiagnosis_Classify(audioBandEnergies, audioBandMean, audioBandStd, audioLabel, &audioConf, &audioFlags);
 
         strncpy(result.audio_diagnosis_label, audioLabel, sizeof(result.audio_diagnosis_label) - 1);
         result.audio_diagnosis_label[sizeof(result.audio_diagnosis_label) - 1] = '\0';

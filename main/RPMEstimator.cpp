@@ -108,7 +108,16 @@ float RPM_Estimate(double *magnitude, int n, float sampleRate) {
             maxBinIndex = i;
         }
     }
-
+    int halfBinIndex = maxBinIndex / 2;
+    if (halfBinIndex >= binMin) {
+        float halfAmplitude = (float)magnitude[halfBinIndex];
+        // Kalau puncak di setengah frekuensi itu masih cukup besar (misal >40% dari puncak utama),
+        // curigai puncak utama itu harmonik 2x -- pindah pegangan ke yang lebih rendah
+        if (halfAmplitude > 0.4f * maxAmplitude) {
+            maxBinIndex = halfBinIndex;
+            maxAmplitude = halfAmplitude;
+        }
+    }
     // Konversi index bin balik ke frekuensi (Hz), lalu ke RPM (x60)
     float refinedBin = (float)maxBinIndex;
         if (maxBinIndex > 0 && maxBinIndex < (n / 2) - 1) {

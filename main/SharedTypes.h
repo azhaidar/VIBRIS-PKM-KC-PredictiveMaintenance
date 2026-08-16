@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 #include "config.h" // Mengunci FFT_SAMPLES agar sinkron secara arsitektur
-enum FeatureIndex { FEAT_VIBRATION = 0, FEAT_AUDIO = 1, FEAT_TEMP = 2, FEAT_COUNT = 3 };//FEAT_CURRENT = 2
 #define BEARING_TABLE_SIZE (sizeof(BEARING_TABLE)/sizeof(BEARING_TABLE[0]))
 #define BEARING_DEFAULT_INDEX 0
 
@@ -33,6 +32,7 @@ struct SensorFeatures {
     volatile float arus;        // Hasil kalkulasi RMS dari sensor SCT [cite: 2026-04-10]
     volatile float suhu;        // Hasil pembacaan dari sensor suhu DS18H [cite: 2026-04-10]
     volatile bool valid;        // Flag integritas data untuk error handling / fail-safe mechanism
+    volatile float kurtosis;   // BARU
 };
 
 // ===================================================================
@@ -52,6 +52,8 @@ struct DetectionResult {
     char  servis_estimasi[32];    // "30+ hari" / "SEGERA" dll
     char  ml_label[16];           // TinyML label
     float ml_confidence;          // TinyML confidence
+    // ... field yang udah ada ...
+    uint8_t diagnosis_flags;   // BARU: bit0=unbalance, bit1=misalignment, bit2=BPFO, bit3=BPFI
 };
 // Spek bearing per klaster mesin.
 // Klaster ditentukan dari kemiripan hasil hitung BPFO/BPFI (RPM x geometri
@@ -85,3 +87,15 @@ static const BearingSpec BEARING_TABLE[] = {
 // DIDEFINISIKAN cuma sekali di FFTProcessor.cpp (lihat FIX 2).
 // Supaya semua file (main.ino, FFTProcessor.cpp) pegang variabel YANG SAMA.
 extern BearingSpec currentBearingSpec;
+enum FeatureIndex { FEAT_VIBRATION = 0, FEAT_AUDIO = 1, FEAT_TEMP = 2, FEAT_KURTOSIS = 3, FEAT_COUNT = 4 };
+
+struct CheckSessionSummary {
+    int  slot;
+    char dominant_status[16];
+    int  count_normal, count_waspada, count_bahaya, count_diam;
+    float avg_health_score;
+    float temp_start, temp_end, temp_delta;
+    unsigned long duration_ms;
+    int  total_samples;
+    int  count_diagnosis_unbalance, count_diagnosis_misalign, count_diagnosis_bpfo, count_diagnosis_bpfi;
+};

@@ -45,6 +45,21 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
     double mean = 0;
     for (int i = 0; i < FFT_SAMPLES; i++) mean += input->samples[i];
     mean /= FFT_SAMPLES;
+    
+    // BARU: Kurtosis -- ukur "seberapa spike" sinyal getaran, sensitif ke
+    // benturan mikro logam-ke-logam akibat cacat bearing. Sehat ~3.0,
+    // naik signifikan (>4-7) kalau ada cacat. Sumber: literature review VIBRIS.
+    double sum2 = 0, sum4 = 0;
+    for (int i = 0; i < FFT_SAMPLES; i++) {
+        double d = input->samples[i] - mean;
+        double d2 = d * d;
+        sum2 += d2;
+        sum4 += d2 * d2;
+    }
+    double variance = sum2 / FFT_SAMPLES;
+    float kurtosis = (variance > 1e-9) ? (float)((sum4 / FFT_SAMPLES) / (variance * variance)) : 0.0f;
+    features->kurtosis = kurtosis;   // lihat langkah 2 di bawah -- perlu tambah field ini
+
 
     for (int i = 0; i < FFT_SAMPLES; i++) {
         vReal[i] = input->samples[i] - mean;

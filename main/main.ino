@@ -15,6 +15,7 @@
 #include "RPMEstimator.h"
 #include "FFTProcessor.h"
 #include "TinyMLClassifier.h"
+#include "CheckSession.h"
 
 // Catatan perubahan (biar klean lain paham kenapa file ini beda
 // dari versi sebelumnya):
@@ -154,9 +155,26 @@ void loop() {
             Serial.println(F("[CMD] Kalibrasi ulang diminta dari Raspi/laptop..."));
             startCalibrationPhase();
             calibrationStartMillis = millis();
+        } else if (cmd == 'K') {
+            startCheckSession(currentMachineSlot);
+        } else if (cmd == 'P') {
+            CheckSessionSummary lastResult;
+            if (loadCheckSummaryFromFlash(currentMachineSlot, &lastResult)) {
+                Serial.printf("[SLOT #%d] Cek terakhir: %s | Normal=%d Waspada=%d Bahaya=%d Diam=%d | Health=%.1f\n",
+                    lastResult.slot, lastResult.dominant_status,
+                    lastResult.count_normal, lastResult.count_waspada,
+                    lastResult.count_bahaya, lastResult.count_diam, lastResult.avg_health_score);
+            } else {
+                Serial.printf("[SLOT #%d] Belum pernah ada hasil cek tersimpan.\n", currentMachineSlot);
+            }
+        } else if (cmd == 'Z') {
+            deleteBaselineFromFlash(currentMachineSlot);
+            deleteCheckSummaryFromFlash(currentMachineSlot);
+            resetBaselineLearner();
+            resetDiagnosisBandBaseline();
+            Serial.printf("[CMD] Baseline & riwayat cek slot #%d DIHAPUS. Perlu kalibrasi ulang.\n", currentMachineSlot);
         }
     }
-
     if (!fresh && stillWarmingUp) {
         strncpy(result.status_label, "Warming", sizeof(result.status_label) - 1);
         result.status_label[sizeof(result.status_label) - 1] = '\0';
@@ -213,7 +231,9 @@ void loop() {
         result.status_label[sizeof(result.status_label) - 1] = '\0';
     } else {
         result = runDetectionCycle();
-        // Setelah result = runDetectionCycle();
+        if (isCheckSessionActive()) {
+            updateCheckSession(result, merged.suhu);   // 'merged' sesuaikan nama variabel aslinya
+        }
 
         // Health Score
         float hs = 100.0f - (result.mahalanobis_D2 / getChiSquare99()) * 100.0f;
@@ -254,7 +274,13 @@ void loop() {
 
 
     Transmitter_SendResult(merged, result, groundTruthLabel);
-
+    static bool wasSessionActive = false; 
+    if (wasSessionActive && !isCheckSessionActive()) {
+        CheckSessionSummary summary = getCheckSessionSummary();
+        Transmitter_SendSessionSummary(summary);
+        saveCheckSummaryToFlash(summary);
+    }
+    wasSessionActive = isCheckSessionActive();
 #if DEBUG_BAND_ENERGY_MODE
         // Nyalakan mode ini SEMENTARA saat mesin dalam kondisi NORMAL untuk
         // mengumpulkan angka mean & std band energy yang benar. Matikan lagi

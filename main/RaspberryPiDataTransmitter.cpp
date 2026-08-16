@@ -45,6 +45,7 @@ void Transmitter_SendResult(SensorFeatures features, DetectionResult result, con
         "\"health_score\":%.1f,\"trend\":\"%s\","
         "\"servis_estimasi\":\"%s\","
         "\"ml_label\":\"%s\",\"ml_conf\":%.2f,"
+        "\"diag_flags\":%d,"
         "\"ground_truth\":\"%s\""
         "}\n",
 
@@ -60,6 +61,20 @@ void Transmitter_SendResult(SensorFeatures features, DetectionResult result, con
         result.health_score, result.trend,
         result.servis_estimasi,
         result.ml_label, result.ml_confidence,
+        result.diagnosis_flags,
         groundTruthLabel
+    );
+}
+void Transmitter_SendSessionSummary(CheckSessionSummary s) {
+    Serial.printf(
+        "{\"type\":\"session_summary\",\"slot\":%d,\"dominant\":\"%s\","
+        "\"n_normal\":%d,\"n_waspada\":%d,\"n_bahaya\":%d,\"n_diam\":%d,"
+        "\"n_unbalance\":%d,\"n_misalign\":%d,\"n_bpfo\":%d,\"n_bpfi\":%d,"
+        "\"avg_health\":%.1f,\"temp_start\":%.2f,\"temp_end\":%.2f,\"temp_delta\":%.2f,"
+        "\"duration_ms\":%lu,\"total_samples\":%d}\n",
+        s.slot, s.dominant_status, s.count_normal, s.count_waspada, s.count_bahaya, s.count_diam,
+        s.count_diagnosis_unbalance, s.count_diagnosis_misalign, s.count_diagnosis_bpfo, s.count_diagnosis_bpfi,
+        s.avg_health_score, s.temp_start, s.temp_end, s.temp_delta,
+        s.duration_ms, s.total_samples
     );
 }

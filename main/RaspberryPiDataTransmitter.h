@@ -21,3 +21,4 @@ ESP32 selesai 100%.
 */
 void Transmitter_Init(long baudRate);
 void Transmitter_SendResult(SensorFeatures features, DetectionResult result, const char* groundTruthLabel);
+void Transmitter_SendSessionSummary(CheckSessionSummary s);

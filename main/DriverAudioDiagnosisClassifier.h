@@ -21,4 +21,4 @@ kemampuan diagnostik audio yang sudah tervalidasi.
 */
 void DriverAudioDiagnosis_Classify(float bandEnergies[3], float bandBaselineMean[3],
                               float bandBaselineStd[3], char *labelOutput,
-                              float *confidenceOutput);
+                              float *confidenceOutput, uint8_t *flagsOutput);

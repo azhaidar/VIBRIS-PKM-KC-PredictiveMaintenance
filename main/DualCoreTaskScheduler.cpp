@@ -58,6 +58,7 @@ static void TaskFFTProcessor(void *pvParameters) {
             for (int i = 0; i < 4; i++) latestBandEnergies[i] = bandEnergies[i];
 
             updateVibrationFeature(fftLocalFeatures.rms_getaran);
+            updateKurtosisFeature(fftLocalFeatures.kurtosis);
 
             #if DEBUG_VERBOSE
                 Serial.printf("[FFT] RPM=%.1f |  Y_RMS=%.4f | X_RMS=%.4f | Z_RMS=%.4f | Unbalance=%.2f | Misalign=%.2f\n",
