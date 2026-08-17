@@ -49,7 +49,7 @@ static char groundTruthLabel[16] = "NORMAL";
 
 static float bandBaselineMean[4] = {0.20f, 0.20f, 0.20f, 0.20f};
 static float bandBaselineStd[4]  = {0.10f, 0.10f, 0.10f, 0.10f};
-#define CALIBRATION_DURATION_MS 60000UL  
+#define CALIBRATION_DURATION_MS 180000UL  
 static unsigned long calibrationStartMillis = 0;
 static int currentMachineSlot = -1;   // BARU: -1 = belum ada mesin dipilih
 void setup() {
@@ -63,7 +63,10 @@ void setup() {
     Scheduler_InitTasks();
     xTaskCreatePinnedToCore(TaskDriverGetaran, "Task_Vib", 3072, NULL, PRIO_TASK_VIB, NULL, CORE_DSP_HIGH_SPEED);
     #if ENABLE_ARUS_SENSOR
-        xTaskCreatePinnedToCore(TaskDriverArus,"Task_Arus", STACK_TASK_ARUS,NULL, PRIO_TASK_ARUS, NULL, CORE_SYSTEM_SLOW_IO);
+        xTaskCreatePinnedToCore(
+            TaskDriverArus, "Task_Arus", STACK_TASK_ARUS, NULL,
+            PRIO_TASK_ARUS, NULL, CORE_DSP_HIGH_SPEED
+        );
     #endif
     xTaskCreatePinnedToCore(TaskDriverSuhu, "Task_Suhu", STACK_TASK_SUHU, NULL, PRIO_TASK_SUHU, NULL, CORE_SYSTEM_SLOW_IO);
  
@@ -71,6 +74,7 @@ void setup() {
     startCalibrationPhase();
     calibrationStartMillis = millis();
     Serial.println(F("[SYSTEM] Boot Complete. Memulai fase kalibrasi self-baseline (180 detik nyata)."));
+
 }
 void selectMachineBaselineSlot(int slot) {
     if (slot == currentMachineSlot) return;   // sudah di mesin ini, gak perlu ngapa-ngapain
@@ -173,6 +177,10 @@ void loop() {
             resetBaselineLearner();
             resetDiagnosisBandBaseline();
             Serial.printf("[CMD] Baseline & riwayat cek slot #%d DIHAPUS. Perlu kalibrasi ulang.\n", currentMachineSlot);
+        } else if (cmd == 'V') {
+            setBearingCluster(0);   // Klaster A ~1400RPM
+        } else if (cmd == 'W') {
+            setBearingCluster(1);   // Klaster B ~2800RPM
         }
     }
     if (!fresh && stillWarmingUp) {

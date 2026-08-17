@@ -48,9 +48,22 @@ void updateAudioFeature(float rmsValue) {
     writeFeature(FEAT_AUDIO, rmsValue);
 }
 
+// void updateCurrentFeature(float rmsValue) {
+//     (void)rmsValue;  // Sensor arus nonaktif sementara (lihat ENABLE_ARUS_SENSOR di config.h).
+//                       // Tidak lagi ditulis ke vektor fitur Mahalanobis (sekarang 3 dimensi).
+// }
+
+// BARU: arus AKTIF LAGI, tapi jalurnya TERPISAH -- HANYA buat TinyML,
+// SENGAJA TIDAK ditulis ke FEAT_COUNT/writeFeature() supaya TIDAK ikut
+// masuk ke vektor Mahalanobis (yang tetap 3 dimensi: getaran, suara, suhu).
+static volatile float latestArusForTinyML = 0.0f;
+
 void updateCurrentFeature(float rmsValue) {
-    (void)rmsValue;  // Sensor arus nonaktif sementara (lihat ENABLE_ARUS_SENSOR di config.h).
-                      // Tidak lagi ditulis ke vektor fitur Mahalanobis (sekarang 3 dimensi).
+    latestArusForTinyML = rmsValue;
+}
+
+float getLatestArusForTinyML() {
+    return latestArusForTinyML;
 }
 
 void updateTemperatureFeature(float value) {

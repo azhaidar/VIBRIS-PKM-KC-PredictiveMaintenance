@@ -3,6 +3,7 @@
 #include "DualCoreTaskScheduler.h"
 #include <Arduino.h>
 #include <string.h>
+#include "MultiSensorFeatureMerger.h"
 
 // ===================================================================
 // LIBRARY HASIL EXPORT EDGE IMPULSE
@@ -107,9 +108,9 @@ void TinyML_Update(const SensorFeatures &features, float rpmEstimated) {
     mlBuffer[base + 2] = rmsY;                 // rms_y
     mlBuffer[base + 3] = rmsZ;                 // rms_z
     mlBuffer[base + 4] = features.rms_suara;   // rms_a
-    mlBuffer[base + 5] = features.arus;        // current
-    mlBuffer[base + 6] = features.suhu;        // temp
-    mlBuffer[base + 7] = rpmEstimated;         // rpm
+    //mlBuffer[base + 5] = getLatestArusForTinyML();   // current -- dari jalur khusus TinyML
+    mlBuffer[base + 5] = features.suhu;        // temp
+    //mlBuffer[base + 6] = rpmEstimated;         // rpm
 
     mlFrameIndex++;
 

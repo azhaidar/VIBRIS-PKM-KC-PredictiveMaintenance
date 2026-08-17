@@ -4,6 +4,7 @@
 #include "DualCoreTaskScheduler.h"
 #include "DriverArus.h"
 #include "DriverSuhu.h"
+#include "MultiSensorFeatureMerger.h"
 
 void Transmitter_Init(long baudRate) {
     // Tidak perlu Serial1.begin() — Serial (USB) sudah di-init di setup() main.ino
@@ -24,7 +25,7 @@ void Transmitter_SendResult(SensorFeatures features, DetectionResult result, con
     Scheduler_GetLatestAudioBandEnergies(audioBandEnergies);
 
     #if ENABLE_ARUS_SENSOR
-        float arusValue = features.arus;
+        float arusValue = getLatestArusForTinyML();   // ambil dari jalur baru, bukan features.arus
         float arusRawADC = DriverArus_GetLastRawADC();
     #else
         float arusValue = 0.0f;

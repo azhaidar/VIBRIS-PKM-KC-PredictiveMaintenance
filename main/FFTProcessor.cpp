@@ -21,11 +21,22 @@ static bool hasRollingBearing = true;
 void setBearingType(bool rollingBearing) {
     hasRollingBearing = rollingBearing;
 }
+void setBearingCluster(int clusterIndex) {
+    if (clusterIndex < 0 || clusterIndex >= (int)BEARING_TABLE_SIZE) {
+        Serial.printf("[FFTProcessor] ERROR: indeks klaster %d di luar jangkauan (0-%d).\n",
+                      clusterIndex, (int)BEARING_TABLE_SIZE - 1);
+        return;
+    }
+    currentBearingSpec = BEARING_TABLE[clusterIndex];
+    Serial.printf("[FFTProcessor] Klaster bearing diganti ke: %s\n", currentBearingSpec.label);
+}
 
 static float stableRPM = 0.0f;
 static int reliableStreak = 0;
+static int unreliableStreak = 0;   // BARU: hitung berapa kali BERTURUT sinyal gagal reliable
+#define UNRELIABLE_CONFIRM_STREAK 3   // butuh 3x berturut baru dianggap "beneran diam", bukan 1x dip sesaat
 
-#define SPECTRAL_AVG_COUNT 6   // rata-rata 6 siklus FFT sebelum cari puncak/SNR
+#define SPECTRAL_AVG_COUNT 12   // rata-rata 6 siklus FFT sebelum cari puncak/SNR
 static double avgMagnitude[FFT_SAMPLES / 2] = {0};
 static int avgAccumCount = 0;
 void FFTProcessor_Init() {}
@@ -154,15 +165,43 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
             snr, snrReliable, features->rms_getaran);
     #endif
     if (!reliable) {
-        reliableStreak = 0;
-        stableRPM = 0.0f;
-        *rpm_out = 0.0f;
-        for (int i = 0; i < 4; i++) bandEnergies_out[i] = 0.0f;
-        features->valid = false;
-        return;
+        unreliableStreak++;
+        if (unreliableStreak >= UNRELIABLE_CONFIRM_STREAK) {
+            // Sudah 3x berturut gagal -- BARU dianggap sinyal beneran hilang
+            reliableStreak = 0;
+            stableRPM = 0.0f;
+            *rpm_out = 0.0f;
+            for (int i = 0; i < 4; i++) bandEnergies_out[i] = 0.0f;
+            features->valid = false;
+            return;
+        } else {
+            // Masih dalam toleransi -- 1-2 dip sesaat, PERTAHANKAN RPM lama,
+            // jangan langsung nol. Band energy tetap di-nol-kan karena spektrum
+            // siklus ini nggak reliable dipakai buat itu, tapi RPM/status nggak
+            // ikut kepengaruh dip sesaat.
+            *rpm_out = stableRPM;
+            for (int i = 0; i < 4; i++) bandEnergies_out[i] = 0.0f;
+            features->valid = true;
+            return;
+        }
     }
+    unreliableStreak = 0;   // BARU: sinyal balik reliable, reset counter
 
     float fr_rpm = RPM_Estimate(vReal, FFT_SAMPLES, effectiveSampleRate);
+
+    // BARU: tolak lompatan RPM yang terlalu drastis (>60% dari nilai sebelumnya)
+    // dalam SATU siklus -- motor fisik nggak mungkin lompat kecepatan sedrastis
+    // itu instan, jadi ini kemungkinan besar salah baca harmonik yang masih
+    // lolos dari filter di RPMEstimator.cpp
+    if (stableRPM > 0.0f) {
+        float relativeChange = fabsf(fr_rpm - stableRPM) / stableRPM;
+        if (relativeChange > 0.6f) {
+            fr_rpm = stableRPM;   // tolak, pertahankan nilai lama
+        }
+    }
+
+    reliableStreak++;
+    if (reliableStreak >= 2) stableRPM = fr_rpm;
     reliableStreak++;
     if (reliableStreak >= 2) stableRPM = fr_rpm;
     *rpm_out = stableRPM;

@@ -108,14 +108,28 @@ float RPM_Estimate(double *magnitude, int n, float sampleRate) {
             maxBinIndex = i;
         }
     }
-    int halfBinIndex = maxBinIndex / 2;
-    if (halfBinIndex >= binMin) {
-        float halfAmplitude = (float)magnitude[halfBinIndex];
-        // Kalau puncak di setengah frekuensi itu masih cukup besar (misal >40% dari puncak utama),
+    // BARU: cari amplitudo TERTINGGI di JENDELA sekitar setengah-frekuensi
+    // (bukan cuma 1 bin persis), karena pembagian integer (maxBinIndex/2)
+    // bisa meleset 1 bin dari posisi puncak 1x yang sebenarnya.
+    int halfBinCenter = maxBinIndex / 2;
+    int windowRadius = 2;   // cek +-2 bin di sekitar titik tengah
+    float bestHalfAmplitude = 0.0f;
+    int bestHalfBinIndex = halfBinCenter;
+    for (int i = halfBinCenter - windowRadius; i <= halfBinCenter + windowRadius; i++) {
+        if (i < binMin || i >= n / 2) continue;
+        if ((float)magnitude[i] > bestHalfAmplitude) {
+            bestHalfAmplitude = (float)magnitude[i];
+            bestHalfBinIndex = i;
+        }
+    }
+    if (bestHalfBinIndex >= binMin) {
+        // Kalau puncak TERKUAT di jendela setengah-frekuensi itu masih cukup
+        // besar (>=30% dari puncak utama -- diturunkan dari 40%, karena
+        // pencarian jendela ini sudah lebih akurat, ambang lebih longgar aman),
         // curigai puncak utama itu harmonik 2x -- pindah pegangan ke yang lebih rendah
-        if (halfAmplitude > 0.4f * maxAmplitude) {
-            maxBinIndex = halfBinIndex;
-            maxAmplitude = halfAmplitude;
+        if (bestHalfAmplitude > 0.3f * maxAmplitude) {
+            maxBinIndex = bestHalfBinIndex;
+            maxAmplitude = bestHalfAmplitude;
         }
     }
     // Konversi index bin balik ke frekuensi (Hz), lalu ke RPM (x60)
