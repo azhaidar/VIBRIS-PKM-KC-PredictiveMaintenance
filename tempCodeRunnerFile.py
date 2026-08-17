@@ -1,0 +1,1 @@
+D:\projects\coding\env\Scripts\activate
