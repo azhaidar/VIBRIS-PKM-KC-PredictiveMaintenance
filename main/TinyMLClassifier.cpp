@@ -12,7 +12,7 @@
 //   ei-radityaputraa-sketch-project-1-arduino-1_0_2-impulse-_2.zip
 // sebelum baris #include di bawah ini bisa ditemukan compiler.
 // ===================================================================
-#include <radityaputraa-sketch-project-1_inferencing.h>
+#include "vibris_inferencing.h"
 
 // Kalau library BELUM ter-install, error compile akan muncul di baris
 // include di atas ("fatal error: ... No such file or directory"), BUKAN

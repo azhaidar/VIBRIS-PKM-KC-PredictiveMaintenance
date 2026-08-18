@@ -99,7 +99,7 @@ const char* getDebounceStatus(const char* newLabel) {
 }
 // State debounce -- taruh di scope file, sejajar dengan diagBandMean dkk
     DetectionResult runDetectionCycle() {
-    DetectionResult result;
+    DetectionResult result{};
     static unsigned long baselineReadyTimestamp = 0;
     static bool wasReady = false;
     result.rpm_estimated = 0.0f;

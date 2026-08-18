@@ -274,13 +274,11 @@ void loop() {
 
         // TinyML
         TinyML_Update(merged, result.rpm_estimated);
-        if (TinyML_HasNewResult()) {
-            strncpy(result.ml_label, TinyML_GetLabel(), 15);
-            result.ml_confidence = TinyML_GetConfidence();
-        }
+        strncpy(result.ml_label, TinyML_GetLabel(), 15);
+        result.ml_label[15] = '\0';
+        result.ml_confidence = TinyML_GetConfidence();
+
     }
-
-
     Transmitter_SendResult(merged, result, groundTruthLabel);
     static bool wasSessionActive = false; 
     if (wasSessionActive && !isCheckSessionActive()) {
