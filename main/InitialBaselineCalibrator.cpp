@@ -9,6 +9,7 @@
 #include <Preferences.h>
 #include <Arduino.h>
 #include "config.h"
+#include "RPMEstimator.h"
 
 
 // FIX: kalibrasi sekarang digerbang WAKTU (180 detik nyata via millis() di
@@ -16,7 +17,7 @@
 // konstan (data lapangan: 1-5 sample/detik). Buffer diperbesar supaya
 // cukup menampung sample terbanyak yang mungkin masuk dalam 180 detik,
 // bahkan setelah fix DriverArus.cpp bikin rate naik mendekati 10/detik.
-#define CALIBRATION_MAX_SAMPLES 300
+#define CALIBRATION_MAX_SAMPLES 3000
 
 bool addBandEnergyCalibrationSample(float bandEnergies[4]);
 void computeBandEnergyBaseline(float meanOutput[4], float stdOutput[4]);
@@ -40,6 +41,7 @@ void startCalibrationPhase() {
     lastCalibrationValid = false;
     calibrationSampleCount = 0;
     calibrationActive = true;
+    resetSNRCalibration();   
     Serial.println(F("[Calibrator] Fase kalibrasi dimulai — pastikan mesin dalam kondisi NORMAL."));
 }
 

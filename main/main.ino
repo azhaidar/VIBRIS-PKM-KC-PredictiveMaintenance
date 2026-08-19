@@ -156,11 +156,19 @@ void loop() {
         } else if (cmd >= '0' && cmd <= '9') {   // BARU: pilih slot baseline mesin (0-5)
             selectMachineBaselineSlot(cmd - '0');
         } else if (cmd == 'R') {   // 'R' = trigger kalibrasi ulang, TANPA reboot/putus koneksi
-            Serial.println(F("[CMD] Kalibrasi ulang diminta dari Raspi/laptop..."));
-            startCalibrationPhase();
-            calibrationStartMillis = millis();
+            if (isCheckSessionActive()) {
+                Serial.println(F("[CMD] Kalibrasi ulang DITOLAK -- sesi Check sedang berjalan, tunggu selesai (1 menit) dulu."));
+            } else {
+                Serial.println(F("[CMD] Kalibrasi ulang diminta dari Raspi/laptop..."));
+                startCalibrationPhase();
+                calibrationStartMillis = millis();
+            }
         } else if (cmd == 'K') {
-            startCheckSession(currentMachineSlot);
+            if (!isBaselineLearnerReady()) {
+                Serial.println(F("[CMD] Mulai Check DITOLAK -- sistem masih dalam fase kalibrasi, tunggu selesai dulu."));
+            } else {
+                startCheckSession(currentMachineSlot);
+            }
         } else if (cmd == 'P') {
             CheckSessionSummary lastResult;
             if (loadCheckSummaryFromFlash(currentMachineSlot, &lastResult)) {
