@@ -122,13 +122,22 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
     bool snrReliable = RPM_IsSignalReliable(vReal, FFT_SAMPLES, effectiveSampleRate, &snr);
     if (snr_out) *snr_out = snr;
 
-    // FIX: gerbang RMS-floor (ambientRmsEMA) DIHAPUS -- variabel itu niatnya
-    // belajar getaran "saat motor diam", tapi protokol pengujian kita
-    // mengharuskan motor SUDAH jalan sebelum device di-reset, jadi variabel
-    // itu tidak pernah punya data "diam" untuk dipelajari dan malah mengejar
-    // levelnya sendiri sampai tidak pernah bisa terpenuhi. SNR check sudah
-    // cukup kuat sendirian untuk membedakan sinyal putaran asli vs noise.
-    bool reliable = snrReliable;
+    // FIX LAMA: gerbang RMS-floor ADAPTIF (ambientRmsEMA) DIHAPUS -- variabel
+    // itu niatnya belajar getaran "saat motor diam" sendiri lewat EMA, tapi
+    // protokol pengujian kita mengharuskan motor SUDAH jalan sebelum device
+    // di-reset, jadi variabel itu tidak pernah punya data "diam" untuk
+    // dipelajari dan malah mengejar levelnya sendiri sampai tidak pernah bisa
+    // terpenuhi. SNR check sendirian ternyata TIDAK cukup -- dibuktikan data
+    // snapshot_BAHAYA 19 Agustus 2026: banyak baris rms_v cuma ~0.09-0.12
+    // (getaran nyaris gak ada) tapi tetap kebaca reliable dengan RPM 338-384,
+    // dan D2 sampai >100 (harusnya ini "Diam", bukan "Bahaya").
+    //
+    // FIX BARU (20 Agustus 2026): tambah syarat KEDUA yang FIXED (bukan
+    // belajar sendiri lagi) -- VIBRATION_ABSOLUTE_FLOOR di config.h, angka
+    // ditentukan dari celah kosong nyata di data rms_v (lihat komentar di
+    // config.h). Sinyal cuma dianggap reliable kalau SNR-nya bagus DAN
+    // amplitudonya (features->rms_getaran) beneran di atas ambang ini.
+    bool reliable = snrReliable && (features->rms_getaran > VIBRATION_ABSOLUTE_FLOOR);
 
     // Diagnostik: cari & CETAK puncak spektrum di rentang 5-50Hz SELALU --
     // tidak digerbang oleh "reliable". Supaya kamu bisa lihat langsung di

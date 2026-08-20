@@ -16,6 +16,7 @@
 #include "FFTProcessor.h"
 #include "TinyMLClassifier.h"
 #include "CheckSession.h"
+#include "FactoryPresets.h"   // BARU (20 Agustus 2026): preset pabrikan Mesin 1/2, lihat file itu utk cara isi
 
 // Catatan perubahan (biar klean lain paham kenapa file ini beda
 // dari versi sebelumnya):
@@ -52,6 +53,12 @@ static float bandBaselineStd[4]  = {0.10f, 0.10f, 0.10f, 0.10f};
 #define CALIBRATION_DURATION_MS 180000UL  
 static unsigned long calibrationStartMillis = 0;
 static int currentMachineSlot = -1;   // BARU: -1 = belum ada mesin dipilih
+static int currentRegime = 0;   // BARU (20 Agustus 2026): kondisi operasi DALAM mesin yang
+                                 // sama (0=default, misal 1=pulley besar, 2=tanpa beban, dst).
+                                 // Beda sama currentMachineSlot -- itu identitas MESIN,
+                                 // ini identitas KONDISI OPERASI mesin itu. Lihat diskusi
+                                 // soal kenapa 1 baseline gak cukup buat semua kondisi
+                                 // operasi (pulley kecil/besar/tanpa beban getarannya beda).
 void setup() {
     TinyML_Init();
     setDiagnosisBandBaseline(bandBaselineMean, bandBaselineStd);
@@ -76,31 +83,117 @@ void setup() {
     Serial.println(F("[SYSTEM] Boot Complete. Memulai fase kalibrasi self-baseline (180 detik nyata)."));
 
 }
-void selectMachineBaselineSlot(int slot) {
-    if (slot == currentMachineSlot) return;   // sudah di mesin ini, gak perlu ngapa-ngapain
-    currentMachineSlot = slot;
+// BARU (20 Agustus 2026): logika "coba muat baseline, kalau gak ada mulai
+// kalibrasi" dipindah ke sini, dipisah dari selectMachineBaselineSlot(),
+// supaya bisa dipakai ULANG dari 2 tempat -- pas GANTI MESIN (slot beda)
+// ATAU pas GANTI KONDISI OPERASI (regime beda) pada mesin yang SAMA.
+// Sebelumnya cuma ada 1 pemicu (ganti slot); sekarang ada 2 pemicu yang
+// butuh perilaku identik, jadi logikanya disatukan di sini biar gak ada
+// 2 salinan kode yang bisa kelupaan disinkronkan kalau nanti diubah lagi.
+// BARU (20 Agustus 2026): cetak 1 hasil kalibrasi (mean/sigmaInv/stdDev +
+// baseline band getaran & audio) sebagai kode C++ siap-copas ke
+// FactoryPresets.h. INI CUMA NGE-PRINT -- gak nyimpen/pakai apa-apa
+// otomatis. Asumsi AUDIO_BAND_COUNT == 3 (nilai sekarang di config.h);
+// kalau itu berubah nanti, baris audioMean/audioStd di bawah perlu
+// disesuaikan jumlah %.6ff-nya.
+static void printFactoryPresetExport(int slot, int regime, float mean[3], float sigmaInv[3][3], float stdDev[3],
+                                      float bandMean[4], float bandStd[4],
+                                      float audioMean[AUDIO_BAND_COUNT], float audioStd[AUDIO_BAND_COUNT]) {
+    Serial.println(F("\n[EXPORT PRESET] Kalau kalibrasi ini BERSIH (motor sudah stabil sebelum mulai),"));
+    Serial.println(F("[EXPORT PRESET] copas blok di bawah ke FactoryPresets.h:"));
+    Serial.printf("// ---- Export slot #%d regime #%d ----\n", slot, regime);
+    Serial.printf("static float preset_mean[3] = {%.6ff, %.6ff, %.6ff};\n", mean[0], mean[1], mean[2]);
+    Serial.printf("static float preset_sigmaInv[3][3] = {{%.6ff,%.6ff,%.6ff},{%.6ff,%.6ff,%.6ff},{%.6ff,%.6ff,%.6ff}};\n",
+        sigmaInv[0][0], sigmaInv[0][1], sigmaInv[0][2],
+        sigmaInv[1][0], sigmaInv[1][1], sigmaInv[1][2],
+        sigmaInv[2][0], sigmaInv[2][1], sigmaInv[2][2]);
+    Serial.printf("static float preset_stdDev[3] = {%.6ff, %.6ff, %.6ff};\n", stdDev[0], stdDev[1], stdDev[2]);
+    Serial.printf("static float preset_bandMean[4] = {%.6ff, %.6ff, %.6ff, %.6ff};\n", bandMean[0], bandMean[1], bandMean[2], bandMean[3]);
+    Serial.printf("static float preset_bandStd[4] = {%.6ff, %.6ff, %.6ff, %.6ff};\n", bandStd[0], bandStd[1], bandStd[2], bandStd[3]);
+    Serial.printf("static float preset_audioMean[AUDIO_BAND_COUNT] = {%.6ff, %.6ff, %.6ff};\n", audioMean[0], audioMean[1], audioMean[2]);
+    Serial.printf("static float preset_audioStd[AUDIO_BAND_COUNT] = {%.6ff, %.6ff, %.6ff};\n", audioStd[0], audioStd[1], audioStd[2]);
+    Serial.println(F("[EXPORT PRESET] Selesai.\n"));
+}
 
+static void applyMachineBaseline(int slot, int regime) {
     float mean[3], sigmaInv[3][3], stdDev[3];
-    if (loadBaselineFromFlash(slot, mean, sigmaInv, stdDev)) {
+    if (loadBaselineFromFlash(slot, mean, sigmaInv, stdDev, regime)) {
         setFeatureStdDev(stdDev);
         initializeBaselineLearner(mean, stdDev, sigmaInv);
 
         float bandMean[4], bandStd[4];
-        if (loadBandBaselineFromFlash(slot, bandMean, bandStd)) {
+        if (loadBandBaselineFromFlash(slot, bandMean, bandStd, regime)) {
             setDiagnosisBandBaseline(bandMean, bandStd);
         }
         float audioMean[AUDIO_BAND_COUNT], audioStd[AUDIO_BAND_COUNT];
-        if (loadAudioBandBaselineFromFlash(slot, audioMean, audioStd)) {
+        if (loadAudioBandBaselineFromFlash(slot, audioMean, audioStd, regime)) {
             setAudioBandBaseline(audioMean, audioStd);
         }
-        Serial.printf("[SYSTEM] Baseline mesin #%d dimuat -- deteksi langsung aktif.\n", slot);
-    } else {
+        Serial.printf("[SYSTEM] Baseline mesin #%d regime #%d dimuat -- deteksi langsung aktif.\n", slot, regime);
+    }
+    // BARU (20 Agustus 2026): kalau flash KOSONG (belum pernah dikalibrasi
+    // sama sekali di device INI), coba dulu preset pabrikan sebelum maksa
+    // user kalibrasi manual. Ini KHUSUS slot 0/1 regime 0 (Mesin 1/Mesin 2
+    // "default") -- lihat FactoryPresets.h. Saklar *_READY di file itu
+    // HARUS true dulu (baru diisi manual setelah kalibrasi bersih), kalau
+    // masih false blok ini gak pernah kepakai sama sekali (aman).
+    else if (slot == 0 && regime == 0 && FACTORY_PRESET_MESIN1_READY) {
+        setFeatureStdDev(presetMesin1_stdDev);
+        initializeBaselineLearner(presetMesin1_mean, presetMesin1_stdDev, presetMesin1_sigmaInv);
+        setDiagnosisBandBaseline(presetMesin1_bandMean, presetMesin1_bandStd);
+        setAudioBandBaseline(presetMesin1_audioMean, presetMesin1_audioStd);
+        Serial.println(F("[SYSTEM] Preset pabrikan Mesin 1 dimuat -- deteksi langsung aktif TANPA kalibrasi."));
+    }
+    // BARU (20 Agustus 2026): sama seperti blok Mesin 1 regime 0 di atas,
+    // tapi buat regime 1 (pulley kecil) -- supaya pulley kecil juga
+    // "gak perlu kalibrasi lagi" walau flash-nya kehapus (erase all) atau
+    // baseline-nya dipakai di unit ESP32 lain. Kalau nanti nambah preset
+    // buat regime lain (2, 3, dst), tinggal copas pola else-if ini.
+    else if (slot == 0 && regime == 1 && FACTORY_PRESET_MESIN1_REGIME1_READY) {
+        setFeatureStdDev(presetMesin1Regime1_stdDev);
+        initializeBaselineLearner(presetMesin1Regime1_mean, presetMesin1Regime1_stdDev, presetMesin1Regime1_sigmaInv);
+        setDiagnosisBandBaseline(presetMesin1Regime1_bandMean, presetMesin1Regime1_bandStd);
+        setAudioBandBaseline(presetMesin1Regime1_audioMean, presetMesin1Regime1_audioStd);
+        Serial.println(F("[SYSTEM] Preset pabrikan Mesin 1 regime 1 (pulley kecil) dimuat -- deteksi langsung aktif TANPA kalibrasi."));
+    }
+    // BARU (20 Agustus 2026): regime 2 (pulley besar) -- pola sama persis
+    // kayak regime 1 di atas.
+    else if (slot == 0 && regime == 2 && FACTORY_PRESET_MESIN1_REGIME2_READY) {
+        setFeatureStdDev(presetMesin1Regime2_stdDev);
+        initializeBaselineLearner(presetMesin1Regime2_mean, presetMesin1Regime2_stdDev, presetMesin1Regime2_sigmaInv);
+        setDiagnosisBandBaseline(presetMesin1Regime2_bandMean, presetMesin1Regime2_bandStd);
+        setAudioBandBaseline(presetMesin1Regime2_audioMean, presetMesin1Regime2_audioStd);
+        Serial.println(F("[SYSTEM] Preset pabrikan Mesin 1 regime 2 (pulley besar) dimuat -- deteksi langsung aktif TANPA kalibrasi."));
+    }
+    else if (slot == 1 && regime == 0 && FACTORY_PRESET_MESIN2_READY) {
+        setFeatureStdDev(presetMesin2_stdDev);
+        initializeBaselineLearner(presetMesin2_mean, presetMesin2_stdDev, presetMesin2_sigmaInv);
+        setDiagnosisBandBaseline(presetMesin2_bandMean, presetMesin2_bandStd);
+        setAudioBandBaseline(presetMesin2_audioMean, presetMesin2_audioStd);
+        Serial.println(F("[SYSTEM] Preset pabrikan Mesin 2 dimuat -- deteksi langsung aktif TANPA kalibrasi."));
+    }
+    else {
         resetBaselineLearner();
         resetDiagnosisBandBaseline();
-        Serial.printf("[SYSTEM] Belum ada baseline utk mesin #%d. Mulai kalibrasi baru (180 detik)...\n", slot);
+        Serial.printf("[SYSTEM] Belum ada baseline utk mesin #%d regime #%d. Mulai kalibrasi baru (180 detik)...\n", slot, regime);
         startCalibrationPhase();
         calibrationStartMillis = millis();
     }
+}
+
+void selectMachineBaselineSlot(int slot) {
+    if (slot == currentMachineSlot) return;   // sudah di mesin ini, gak perlu ngapa-ngapain
+    currentMachineSlot = slot;
+    applyMachineBaseline(currentMachineSlot, currentRegime);
+}
+
+// BARU: sama kayak selectMachineBaselineSlot(), tapi buat ganti KONDISI
+// OPERASI pada mesin yang SAMA (mesinnya gak berubah). Dipicu dari command
+// serial huruf kecil 'a'-'j' (lihat loop() di bawah).
+void selectRegime(int regime) {
+    if (regime == currentRegime) return;   // udah di regime ini, gak perlu ngapa-ngapain
+    currentRegime = regime;
+    applyMachineBaseline(currentMachineSlot, currentRegime);
 }
 void loop() {
     SensorFeatures merged{};
@@ -155,11 +248,26 @@ void loop() {
             ESP.restart();
         } else if (cmd >= '0' && cmd <= '9') {   // BARU: pilih slot baseline mesin (0-5)
             selectMachineBaselineSlot(cmd - '0');
+        } else if (cmd >= 'a' && cmd <= 'j') {   // BARU (20 Agustus 2026): pilih regime/kondisi
+            // operasi (0-9) DALAM mesin yang lagi aktif -- huruf kecil sengaja dipakai
+            // biar gak ketuker sama command huruf besar yang udah ada ('B','N',dst).
+            // 'a'=regime 0 (default/sama kayak sebelum fitur ini ada), 'b'=regime 1, dst.
+            selectRegime(cmd - 'a');
         } else if (cmd == 'R') {   // 'R' = trigger kalibrasi ulang, TANPA reboot/putus koneksi
             if (isCheckSessionActive()) {
                 Serial.println(F("[CMD] Kalibrasi ulang DITOLAK -- sesi Check sedang berjalan, tunggu selesai (1 menit) dulu."));
             } else {
                 Serial.println(F("[CMD] Kalibrasi ulang diminta dari Raspi/laptop..."));
+                // FIX (20 Agustus 2026): sebelumnya resetBaselineLearner() di
+                // bawah ini TIDAK ADA. Akibatnya isBaselineLearnerReady() tetap
+                // TRUE (baseline LAMA masih dianggap "siap" di memori), jadi
+                // cabang "Calibrating" di loop() (butuh !isBaselineLearnerReady())
+                // TIDAK PERNAH aktif -- sistem malah langsung jalanin deteksi
+                // pakai baseline LAMA, makanya status lompat ke Waspada/Bahaya
+                // walau kamu baru pencet "Kalibrasi Ulang", dan sample kalibrasi
+                // baru TIDAK PERNAH terkumpul sama sekali.
+                resetBaselineLearner();
+                resetDiagnosisBandBaseline();
                 startCalibrationPhase();
                 calibrationStartMillis = millis();
             }
@@ -180,11 +288,11 @@ void loop() {
                 Serial.printf("[SLOT #%d] Belum pernah ada hasil cek tersimpan.\n", currentMachineSlot);
             }
         } else if (cmd == 'Z') {
-            deleteBaselineFromFlash(currentMachineSlot);
+            deleteBaselineFromFlash(currentMachineSlot, currentRegime);
             deleteCheckSummaryFromFlash(currentMachineSlot);
             resetBaselineLearner();
             resetDiagnosisBandBaseline();
-            Serial.printf("[CMD] Baseline & riwayat cek slot #%d DIHAPUS. Perlu kalibrasi ulang.\n", currentMachineSlot);
+            Serial.printf("[CMD] Baseline slot #%d regime #%d DIHAPUS (riwayat cek slot ikut kehapus). Perlu kalibrasi ulang.\n", currentMachineSlot, currentRegime);
         } else if (cmd == 'V') {
             setBearingCluster(0);   // Klaster A ~1400RPM
         } else if (cmd == 'W') {
@@ -222,22 +330,37 @@ void loop() {
         if (isLastCalibrationValid()) {
             getFeatureStdDev(stdDev);
             initializeBaselineLearner(mean, stdDev, sigmaInv);
-            saveBaselineToFlash(currentMachineSlot >= 0 ? currentMachineSlot : 0, mean, sigmaInv, stdDev);
+            saveBaselineToFlash(currentMachineSlot >= 0 ? currentMachineSlot : 0, mean, sigmaInv, stdDev, currentRegime);
 
             // TAMBAHAN: baseline band frekuensi sekarang dihitung dari data
             // kalibrasi NYATA, bukan placeholder 0.20/0.10 selamanya.
             float bandMean[4], bandStd[4];
             computeBandEnergyBaseline(bandMean, bandStd);
             setDiagnosisBandBaseline(bandMean, bandStd);
-            saveBandBaselineToFlash(currentMachineSlot >= 0 ? currentMachineSlot : 0, bandMean, bandStd);
+            saveBandBaselineToFlash(currentMachineSlot >= 0 ? currentMachineSlot : 0, bandMean, bandStd, currentRegime);
 
             float audioMean[AUDIO_BAND_COUNT], audioStd[AUDIO_BAND_COUNT];
             computeAudioBandBaseline(audioMean, audioStd);
             setAudioBandBaseline(audioMean, audioStd);
-            saveAudioBandBaselineToFlash(currentMachineSlot >= 0 ? currentMachineSlot : 0, audioMean, audioStd);
+            saveAudioBandBaselineToFlash(currentMachineSlot >= 0 ? currentMachineSlot : 0, audioMean, audioStd, currentRegime);
 
             setRuntimeSNRThreshold(computeSNRThresholdFromCalibration());
             Serial.println(F("[SYSTEM] Kalibrasi VALID. Baseline mean/sigma dan band energy siap."));
+
+            // BARU (20 Agustus 2026): cetak hasil kalibrasi ini dalam format
+            // kode C++ siap-copas -- BUKAN buat dipakai otomatis, cuma biar
+            // kamu bisa salin manual ke FactoryPresets.h kalau kalibrasi
+            // INI beneran bersih (motor udah stabil sebelum mulai). Cek
+            // printFactoryPresetExport() di bawah loop() buat detailnya.
+            // FIX (20 Agustus 2026): sebelumnya baris ini kirim currentMachineSlot
+            // MENTAH-MENTAH -- kalau belum pernah pilih slot (masih -1, nilai
+            // default), komentar hasil export jadi salah nyebut "slot #-1"
+            // padahal baseline-nya BENERAN kesimpen di slot #0 (lihat
+            // saveBaselineToFlash 3 baris di atas, yang sudah pakai fallback
+            // ">= 0 ? ... : 0"). Baris ini disamain fallback-nya biar labelnya
+            // gak nyasar, walau datanya sendiri sebenarnya sudah benar dari awal.
+            printFactoryPresetExport(currentMachineSlot >= 0 ? currentMachineSlot : 0, currentRegime,
+                mean, sigmaInv, stdDev, bandMean, bandStd, audioMean, audioStd);
         } else {
             Serial.println(F("[SYSTEM] Kalibrasi GAGAL (varians terlalu rendah). Mengulang 180 detik..."));
             startCalibrationPhase();

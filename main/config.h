@@ -65,6 +65,25 @@
 #define RPM_MAX_DELTA_MIN       50.0f   // BARU
 #define PRIO_TASK_AUDIO_FFT     1       // BARU
 #define STACK_TASK_AUDIO_FFT    4096    // BARU
+#define VIBRATION_ABSOLUTE_FLOOR 1.2f
+
+// FIX (20 Agustus 2026): ambang batas AMPLITUDO MUTLAK, bukan adaptif/belajar
+// sendiri (percobaan sebelumnya pakai ambang belajar-sendiri "ambientRmsEMA"
+// sudah DIHAPUS -- lihat catatan di FFTProcessor.cpp -- karena protokol uji
+// kita gak pernah kasih dia data "motor diam" buat dipelajari, jadi gak
+// pernah kepenuhi). Angka ini FIXED, ditentukan dari data ASLI 23 file
+// snapshot_BAHAYA/WASPADA tanggal 19 Agustus 2026 (folder logs/): rms_v
+// ngumpul jadi 2 kelompok jelas -- kelompok "noise/gak beneran muter"
+// di 0.087-0.95, kelompok "beneran bergetar" di 1.69-5.01, dengan CELAH
+// KOSONG di antaranya. 1.2 dipilih persis di tengah celah itu.
+// DIPAKAI DI: FFTProcessor.cpp, sebagai syarat TAMBAHAN (bukan pengganti)
+// dari cek SNR yang sudah ada -- supaya sinyal cuma dianggap "motor jalan"
+// kalau SNR-nya bagus DAN amplitudonya beneran cukup besar.
+// PENTING: kalau nanti sensor/mounting getaran diganti, atau motor baru
+// yang jauh lebih kecil/besar dipakai, angka ini WAJIB dicek ulang dengan
+// cara yang sama (kumpulin rms_v dari data nyata, cari celahnya) -- jangan
+// diasumsikan otomatis masih benar.
+#define VIBRATION_ABSOLUTE_FLOOR 1.2f
 
 
 #define FIXED_BPFO_HZ  69.6f

@@ -17,7 +17,7 @@
 // konstan (data lapangan: 1-5 sample/detik). Buffer diperbesar supaya
 // cukup menampung sample terbanyak yang mungkin masuk dalam 180 detik,
 // bahkan setelah fix DriverArus.cpp bikin rate naik mendekati 10/detik.
-#define CALIBRATION_MAX_SAMPLES 3000
+#define CALIBRATION_MAX_SAMPLES 2000
 
 bool addBandEnergyCalibrationSample(float bandEnergies[4]);
 void computeBandEnergyBaseline(float meanOutput[4], float stdOutput[4]);
@@ -32,6 +32,20 @@ static float featureStdDev[4] = {1.0f, 1.0f, 1.0f};
 static Preferences flashStorage;
 static const char* NVS_NAMESPACE = "baseline";
 static bool lastCalibrationValid = false;
+
+// BARU (20 Agustus 2026): 1 tempat tunggal buat bikin nama "laci" flash per
+// (prefix, slot, regime). ATURAN PENTING: regime 0 HARUS pakai nama laci
+// PERSIS SAMA seperti sebelum fitur regime ini ada ("baseline0", bukan
+// "baseline0_0") -- supaya baseline yang sudah pernah kalian kalibrasi &
+// simpan SEBELUM perubahan ini tetap kebaca normal, gak "hilang" cuma
+// karena nama lacinya berubah. Regime 1 ke atas baru dapet akhiran "_N".
+static void buildBaselineNamespace(char *outNs, size_t outNsSize, const char *prefix, int slot, int regime) {
+    if (regime == 0) {
+        snprintf(outNs, outNsSize, "%s%d", prefix, slot);
+    } else {
+        snprintf(outNs, outNsSize, "%s%d_%d", prefix, slot, regime);
+    }
+}
 
 bool isLastCalibrationValid() {
     return lastCalibrationValid;
@@ -116,18 +130,18 @@ void computeAudioBandBaseline(float meanOutput[AUDIO_BAND_COUNT], float stdOutpu
     Serial.printf("[Calibrator] Audio band baseline selesai dari %d sample.\n", audioCalibrationSampleCount);
 }
 
-void saveAudioBandBaselineToFlash(int slot, float mean[AUDIO_BAND_COUNT], float std[AUDIO_BAND_COUNT]) {
+void saveAudioBandBaselineToFlash(int slot, float mean[AUDIO_BAND_COUNT], float std[AUDIO_BAND_COUNT], int regime) {
     char ns[16];
-    snprintf(ns, sizeof(ns), "audiobase%d", slot);
+    buildBaselineNamespace(ns, sizeof(ns), "audiobase", slot, regime);
     flashStorage.begin(ns, false);
     flashStorage.putBytes("mean", mean, sizeof(float) * AUDIO_BAND_COUNT);
     flashStorage.putBytes("std", std, sizeof(float) * AUDIO_BAND_COUNT);
     flashStorage.end();
 }
 
-bool loadAudioBandBaselineFromFlash(int slot, float meanOutput[AUDIO_BAND_COUNT], float stdOutput[AUDIO_BAND_COUNT]) {
+bool loadAudioBandBaselineFromFlash(int slot, float meanOutput[AUDIO_BAND_COUNT], float stdOutput[AUDIO_BAND_COUNT], int regime) {
     char ns[16];
-    snprintf(ns, sizeof(ns), "audiobase%d", slot);
+    buildBaselineNamespace(ns, sizeof(ns), "audiobase", slot, regime);
     flashStorage.begin(ns, true);
     size_t meanLen = flashStorage.getBytesLength("mean");
     size_t stdLen  = flashStorage.getBytesLength("std");
@@ -140,17 +154,17 @@ bool loadAudioBandBaselineFromFlash(int slot, float meanOutput[AUDIO_BAND_COUNT]
     flashStorage.end();
     return true;
 }
-void saveBandBaselineToFlash(int slot, float mean[4], float std[4]) {
+void saveBandBaselineToFlash(int slot, float mean[4], float std[4], int regime) {
     char ns[16];
-    snprintf(ns, sizeof(ns), "bandbase%d", slot);
+    buildBaselineNamespace(ns, sizeof(ns), "bandbase", slot, regime);
     flashStorage.begin(ns, false);
     flashStorage.putBytes("mean", mean, sizeof(float) * 4);
     flashStorage.putBytes("std", std, sizeof(float) * 4);
     flashStorage.end();
 }
-bool loadBandBaselineFromFlash(int slot, float meanOutput[4], float stdOutput[4]) {
+bool loadBandBaselineFromFlash(int slot, float meanOutput[4], float stdOutput[4], int regime) {
     char ns[16];
-    snprintf(ns, sizeof(ns), "bandbase%d", slot);
+    buildBaselineNamespace(ns, sizeof(ns), "bandbase", slot, regime);
     flashStorage.begin(ns, true);
     size_t meanLen = flashStorage.getBytesLength("mean");
     size_t stdLen  = flashStorage.getBytesLength("std");
@@ -268,33 +282,33 @@ void computeInitialBaseline(float meanOutput[3], float sigmaInverseOutput[3][3])
     Serial.printf("[Calibrator] Baseline selesai dari %d sample.\n", calibrationSampleCount);
 }
 
-void saveBaselineToFlash(int slot, float mean[3], float sigmaInverse[3][3], float stdDev[3]) {
+void saveBaselineToFlash(int slot, float mean[3], float sigmaInverse[3][3], float stdDev[3], int regime) {
     char ns[16];
-    snprintf(ns, sizeof(ns), "baseline%d", slot);
+    buildBaselineNamespace(ns, sizeof(ns), "baseline", slot, regime);
     flashStorage.begin(ns, false);
     flashStorage.putBytes("mean", mean, sizeof(float) * 3);
     flashStorage.putBytes("sigmaInv", sigmaInverse, sizeof(float) * 9);
     flashStorage.putBytes("stdDev", stdDev, sizeof(float) * 3);
     flashStorage.end();
-    Serial.printf("[Calibrator] Baseline mesin #%d tersimpan ke flash.\n", slot);
+    Serial.printf("[Calibrator] Baseline mesin #%d regime #%d tersimpan ke flash.\n", slot, regime);
 }
-bool loadBaselineFromFlash(int slot, float meanOutput[3], float sigmaInverseOutput[3][3], float stdDevOutput[3]) {
+bool loadBaselineFromFlash(int slot, float meanOutput[3], float sigmaInverseOutput[3][3], float stdDevOutput[3], int regime) {
     char ns[16];
-    snprintf(ns, sizeof(ns), "baseline%d", slot);
+    buildBaselineNamespace(ns, sizeof(ns), "baseline", slot, regime);
     flashStorage.begin(ns, true);
     size_t meanLen = flashStorage.getBytesLength("mean");
     size_t sigmaLen = flashStorage.getBytesLength("sigmaInv");
     size_t stdLen = flashStorage.getBytesLength("stdDev");
     if (meanLen != sizeof(float) * 3 || sigmaLen != sizeof(float) * 9 || stdLen != sizeof(float) * 3) {
         flashStorage.end();
-        Serial.printf("[Calibrator] Tidak ada baseline tersimpan untuk mesin #%d.\n", slot);
+        Serial.printf("[Calibrator] Tidak ada baseline tersimpan untuk mesin #%d regime #%d.\n", slot, regime);
         return false;
     }
     flashStorage.getBytes("mean", meanOutput, meanLen);
     flashStorage.getBytes("sigmaInv", sigmaInverseOutput, sigmaLen);
     flashStorage.getBytes("stdDev", stdDevOutput, stdLen);
     flashStorage.end();
-    Serial.printf("[Calibrator] Baseline mesin #%d berhasil dimuat dari flash.\n", slot);
+    Serial.printf("[Calibrator] Baseline mesin #%d regime #%d berhasil dimuat dari flash.\n", slot, regime);
     return true;
 }
 
@@ -311,22 +325,22 @@ void getFeatureStdDev(float stdDevOutput[4]) {
     for (int i = 0; i < 3; i++) stdDevOutput[i] = featureStdDev[i];
 }
 
-void deleteBaselineFromFlash(int slot) {
+void deleteBaselineFromFlash(int slot, int regime) {
     char ns[16];
-    snprintf(ns, sizeof(ns), "baseline%d", slot);
+    buildBaselineNamespace(ns, sizeof(ns), "baseline", slot, regime);
     flashStorage.begin(ns, false);
     flashStorage.clear();
     flashStorage.end();
 
-    snprintf(ns, sizeof(ns), "bandbase%d", slot);
+    buildBaselineNamespace(ns, sizeof(ns), "bandbase", slot, regime);
     flashStorage.begin(ns, false);
     flashStorage.clear();
     flashStorage.end();
 
-    snprintf(ns, sizeof(ns), "audiobase%d", slot);
+    buildBaselineNamespace(ns, sizeof(ns), "audiobase", slot, regime);
     flashStorage.begin(ns, false);
     flashStorage.clear();
     flashStorage.end();
 
-    Serial.printf("[Calibrator] Baseline mesin #%d DIHAPUS dari flash.\n", slot);
+    Serial.printf("[Calibrator] Baseline mesin #%d regime #%d DIHAPUS dari flash.\n", slot, regime);
 }

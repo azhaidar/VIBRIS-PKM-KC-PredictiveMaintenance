@@ -94,6 +94,28 @@ float getSmoothedTempRate(float currentTemp) {
         return 0.0f;
     }
 
+    // FIX (20 Agustus 2026): sebelumnya dt dihitung dari "waktu sejak
+    // PEMANGGILAN fungsi ini terakhir" -- padahal sensor suhu (MLX90614,
+    // task terpisah TaskDriverSuhu di DriverSuhu.cpp) update jauh lebih
+    // lambat daripada loop() utama manggil fungsi ini. Akibatnya: begitu
+    // sensor akhirnya update, delta suhu asli (terkumpul selama SEKIAN
+    // lama sejak update terakhir) dibagi dt yang cuma sependek 1 interval
+    // loop() -- rate-nya jadi dipalsukan jauh lebih besar dari laju asli.
+    // Parahnya lagi, seberapa parah pemalsuan ini beda-beda tergantung
+    // SECEPAT APA loop() jalan saat itu -- pas kalibrasi (loop ringan,
+    // cuma nyimpen sample) vs pas monitoring (loop berat: diagnosis
+    // audio+TinyML+trend+dst, otomatis lebih lambat) -- jadi baseline &
+    // pembacaan real-time bisa punya skala yang gak konsisten walau
+    // sensornya sama & mesinnya gak berubah kondisi. Data 20 Agustus 2026
+    // nunjukin D2 nyangkut di ~65-90 terus-terusan pasca kalibrasi padahal
+    // getaran & suara udah cocok sama baseline -- fitur suhu ini kandidat
+    // kuat penyebabnya. Fix: kalau suhu BELUM berubah dari pembacaan
+    // terakhir, jangan hitung rate baru sama sekali (dt terus menumpuk
+    // sampai suhu beneran berubah, gak lagi ke-reset tiap panggilan).
+    if (currentTemp == lastTempForRate) {
+        return smoothedTempRate;
+    }
+
     float dtSeconds = (now - lastTempRateTime) / 1000.0f;
     if (dtSeconds < 0.001f) return smoothedTempRate;   // hindari bagi nol
 

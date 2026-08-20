@@ -80,7 +80,7 @@ struct BearingSpec {
 static const BearingSpec BEARING_TABLE[] = {
     // n_balls, Bd(mm), Pd(mm), phi(deg), label
     {8, 6.35f, 25.0f, 0.0f, "Klaster A: ~1400RPM (6202)", 23.33f, 46.67f, 69.63f, 117.09f},
-    {8, 6.75f, 28.5f, 0.0f, "Klaster B: ~2800RPM (6203)", 46.67f, 93.33f, 142.46f, 230.87f},
+    {8, 6.75f, 28.5f, 0.0f, "Klaster A: ~1400RPM (6203)", 23.33f, 46.67f, 71.23f, 115.44f},
 };
 
 // PENTING: bukan 'static' -- ini DIDEKLARASIKAN di sini, tapi

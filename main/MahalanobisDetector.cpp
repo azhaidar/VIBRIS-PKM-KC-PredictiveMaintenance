@@ -133,7 +133,19 @@ const char* getDebounceStatus(const char* newLabel) {
     static float smoothedRms = 0.0f, smoothedRoughness = 0.0f;
     #define FEATURE_SMOOTH_ALPHA 0.3f
     smoothedRms       = FEATURE_SMOOTH_ALPHA * merged.rms_getaran + (1-FEATURE_SMOOTH_ALPHA) * smoothedRms;
-    smoothedRoughness = FEATURE_SMOOTH_ALPHA * Scheduler_GetLatestRoughness() + (1-FEATURE_SMOOTH_ALPHA) * smoothedRoughness;
+    // FIX (20 Agustus 2026): sebelumnya baris ini pakai Scheduler_GetLatestRoughness()
+    // -- itu SINYAL BEDA TOTAL dari yang direkam pas kalibrasi. Buktinya:
+    // InitialBaselineCalibrator.cpp baris 200 nyimpen sample.rms_suara (RMS
+    // amplitudo mentah dari mikrofon INMP441) sebagai fitur audio ke-2,
+    // BUKAN "roughness" (fitur spektral lain, beda skala total). Data nyata
+    // 20 Agustus 2026 buktiin dampaknya: mean roughness pas kalibrasi =
+    // 0.023940, tapi mean roughness pas monitoring 1 menit kemudian (mesin
+    // & lingkungan SAMA persis) = 0.006213 -- 4x lebih kecil. Bukan
+    // mesinnya berubah, tapi dari awal baseline & pembacaan real-time
+    // membandingkan 2 besaran yang beda, jadi D^2 selalu meleset tinggi
+    // dan status kejebak "Bahaya" terus walau mesin normal. Diganti ke
+    // merged.rms_suara biar SAMA PERSIS sinyal yang direkam calibrator.
+    smoothedRoughness = FEATURE_SMOOTH_ALPHA * merged.rms_suara + (1-FEATURE_SMOOTH_ALPHA) * smoothedRoughness;
 
     float currentFeatures[3] = {
         smoothedRms, smoothedRoughness, getSmoothedTempRate(merged.suhu)

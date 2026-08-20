@@ -40,19 +40,27 @@ bool addCalibrationSample(SensorFeatures sample);
 void computeInitialBaseline(float meanOutput[3], float sigmaInverseOutput[3][3]);
 void getFeatureStdDev(float stdDevOutput[3]);
 void setFeatureStdDev(float stdDev[3]);
-void saveBaselineToFlash(int slot, float mean[3], float sigmaInverse[3][3], float stdDev[3]);
-bool loadBaselineFromFlash(int slot, float meanOutput[3], float sigmaInverseOutput[3][3], float stdDevOutput[3]);
+void saveBaselineToFlash(int slot, float mean[3], float sigmaInverse[3][3], float stdDev[3], int regime = 0);
+bool loadBaselineFromFlash(int slot, float meanOutput[3], float sigmaInverseOutput[3][3], float stdDevOutput[3], int regime = 0);
 
 // TAMBAHKAN 4 baris ini (dekat prototype band getaran yang udah ada):
 bool addAudioBandEnergyCalibrationSample(float audioBandEnergies[AUDIO_BAND_COUNT]);
 void computeAudioBandBaseline(float meanOutput[AUDIO_BAND_COUNT], float stdOutput[AUDIO_BAND_COUNT]);
-void saveAudioBandBaselineToFlash(int slot, float mean[AUDIO_BAND_COUNT], float std[AUDIO_BAND_COUNT]);
-bool loadAudioBandBaselineFromFlash(int slot, float meanOutput[AUDIO_BAND_COUNT], float stdOutput[AUDIO_BAND_COUNT]);
+void saveAudioBandBaselineToFlash(int slot, float mean[AUDIO_BAND_COUNT], float std[AUDIO_BAND_COUNT], int regime = 0);
+bool loadAudioBandBaselineFromFlash(int slot, float meanOutput[AUDIO_BAND_COUNT], float stdOutput[AUDIO_BAND_COUNT], int regime = 0);
 
 bool isLastCalibrationValid();
 bool addBandEnergyCalibrationSample(float bandEnergies[4]);
 void computeBandEnergyBaseline(float meanOutput[4], float stdOutput[4]);
-void saveBandBaselineToFlash(int slot, float mean[4], float std[4]);
-bool loadBandBaselineFromFlash(int slot, float meanOutput[4], float stdOutput[4]);
+void saveBandBaselineToFlash(int slot, float mean[4], float std[4], int regime = 0);
+bool loadBandBaselineFromFlash(int slot, float meanOutput[4], float stdOutput[4], int regime = 0);
 
-void deleteBaselineFromFlash(int slot);
+// BARU (20 Agustus 2026): parameter "regime" -- ID kondisi operasi (0-9)
+// DALAM 1 mesin yang sama (misal: 0=pulley kecil, 1=pulley besar, 2=tanpa
+// beban). Ini SUMBU TERPISAH dari "slot" (slot = identitas mesin). Default
+// 0 supaya semua kode lama yang manggil fungsi-fungsi ini tanpa parameter
+// regime tetap kekompile & jalan SAMA PERSIS seperti sebelumnya --
+// slot X regime 0 itu namespace flash yang SAMA dengan "baseline lama"
+// sebelum perubahan ini ada, jadi baseline yang udah kalian kalibrasi &
+// flash sebelumnya TIDAK HILANG.
+void deleteBaselineFromFlash(int slot, int regime = 0);

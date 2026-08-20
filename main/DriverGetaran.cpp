@@ -15,9 +15,29 @@ void TaskDriverGetaran(void *pvParameters) {
 
     I2CLis3dh.begin(PIN_LIS3DH_SDA, PIN_LIS3DH_SCL, 400000);
 
-    if (!lis3dhInstance.begin(0x18)) {
+    // FIX (20 Agustus 2026): sebelumnya lis3dhInstance.begin(0x18) cuma
+    // dicoba SEKALI -- gagal 1x di sini = macet PERMANEN sepanjang boot
+    // itu (for(;;) di bawah gak ada jalan keluar), status jadi "SensorFault"
+    // terus dan rms_v/rpm/d2 semua 0. Data lapangan 20 Agustus 2026 buktikan
+    // sensornya sebenarnya kadang cuma belum "siap" tepat di momen ini
+    // (race condition power-up I2C) -- terbukti begitu ESP32 di-reset ulang
+    // (buka Serial Monitor Arduino IDE ATAU buka loggerserial.py, dua-duanya
+    // memicu reset via DTR), kadang langsung kedeteksi normal tanpa apapun
+    // disentuh fisik. Sekarang dikasih jeda + coba ulang terbatas DULU
+    // sebelum bener-bener dianggap gagal -- kalau memang gagal terus
+    // (kabel/solder beneran bermasalah), tetap masuk for(;;) yang sama
+    // seperti sebelumnya, bukan disembunyikan.
+    bool lis3dhFound = false;
+    for (int attempt = 0; attempt < 10 && !lis3dhFound; attempt++) {
+        if (lis3dhInstance.begin(0x18)) {
+            lis3dhFound = true;
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(200));   // kasih waktu sensor selesai power-up sebelum coba lagi
+        }
+    }
+    if (!lis3dhFound) {
         for (;;) {
-            Serial.println(F("[ERROR] LIS3DH Tidak Terdeteksi!"));
+            Serial.println(F("[ERROR] LIS3DH Tidak Terdeteksi! (sudah dicoba 10x -- cek sambungan SDA/SCL & solderan modul)"));
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
