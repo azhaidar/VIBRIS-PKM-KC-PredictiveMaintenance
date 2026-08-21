@@ -38,7 +38,7 @@ colorama_init(autoreset=True)
 # ======================= KONFIGURASI =======================
 SERIAL_PORT = "COM3"      # GANTI sesuai port ESP32 kamu
 BAUD_RATE = 115200
-REKAM_DURASI_MENIT = 5    # BARU: auto-stop flat, ganti angka ini kalau mau beda
+REKAM_DURASI_MENIT = 4    # BARU: auto-stop flat, ganti angka ini kalau mau beda
 DATASET_DIR = "Dataset"   # BARU: semua file CSV/txt hasil logging disimpan di sini
 SYSTEM_LOG_FILE = os.path.join(DATASET_DIR, "vibris_system_log.txt")   # BARU: nampung semua baris BUKAN JSON, biar gak hilang
 _timestamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -91,6 +91,29 @@ def pilih_slot(ser, state, slot):
     state["slot_aktif"] = slot
     print(f"{Fore.GREEN}[LOGGER] Slot motor aktif sekarang: #{slot}{Style.RESET_ALL}")
 
+    # FIX (21 Agustus 2026): sebelumnya baris "klaster bearing" di header
+    # menu utama TIDAK PERNAH ke-update di sini -- cuma ke-update kalau user
+    # buka menu 7 manual. Akibatnya header tetap nampilin "BELUM DIPILIH..."
+    # SELAMANYA walaupun firmware (main.ino, selectMachineBaselineSlot())
+    # sekarang OTOMATIS ganti klaster bearing ikut nomor slot. Disamain di
+    # sini biar gak nunjukin info basi.
+    # PENTING -- ini CUMA TAMPILAN, bukan bukti: baris ini nganggep firmware
+    # kamu SUDAH versi dengan fix auto-sync itu. Kalau firmware masih versi
+    # LAMA (belum di-upload ulang lewat Arduino IDE), device-nya SUNGGUHAN
+    # gak ganti klaster apa-apa, tapi baris ini tetap bakal "sok yakin"
+    # bilang sudah sesuai -- karena Python gak bisa tau firmware versi
+    # berapa yang sebenarnya jalan di ESP32. SATU-SATUNYA bukti asli adalah
+    # baris "[FFTProcessor] Klaster bearing diganti ke: ..." yang DIPRINT
+    # LANGSUNG OLEH ESP32 sendiri (bukan baris print dari Python manapun) --
+    # itu yang harus dicek muncul atau tidak tiap ganti slot, jangan percaya
+    # cuma dari tampilan header ini.
+    if str(slot + 1) in MENU_KLASTER:
+        _, nama_klaster = MENU_KLASTER[str(slot + 1)]
+        state["klaster_aktif"] = f"{nama_klaster} (asumsi ikut slot -- VERIFIKASI baris ESP32!)"
+    else:
+        state["klaster_aktif"] = (f"TIDAK ada klaster terdaftar utk slot #{slot} -- "
+                                   f"pilih manual lewat menu 7 kalau perlu")
+
 
 def pilih_regime(ser, state, regime):
     # BARU: regime 0-9 dikirim sebagai huruf kecil 'a'-'j' ke firmware
@@ -101,6 +124,24 @@ def pilih_regime(ser, state, regime):
     kirim_command(ser, huruf)
     state["regime_aktif"] = regime
     print(f"{Fore.GREEN}[LOGGER] Regime/kondisi operasi aktif sekarang: #{regime}{Style.RESET_ALL}")
+
+
+def set_klaster(ser, state, kode_menu):
+    # BARU (21 Agustus 2026): sebelumnya command 'V'/'W' di main.ino (ganti
+    # klaster bearing 6203<->6201) ada di FIRMWARE tapi TIDAK ADA jalan
+    # kirimnya dari menu manapun di file ini -- jadi baseline Motor 2 kemarin
+    # (log 21 Agustus, sesi 16:08) kesimpen dengan klaster bearing MASIH di
+    # default (6203/Motor 1), padahal yang muter fisiknya Motor 2 (6201).
+    # Akibatnya: label diagnosis jenis kerusakan (Unbalance/Misalignment/
+    # BPFO/BPFI) di data itu ngecek frekuensi bearing yang SALAH -- bukan
+    # error baru, ini PENYEBAB kenapa command itu gak pernah kekirim.
+    # Ini SUMBU KETIGA, terpisah dari slot (mesin yang mana) dan regime
+    # (kondisi operasi yang mana): klaster = SPESIFIKASI BEARING yang
+    # terpasang di motor yang lagi diuji SEKARANG.
+    huruf, nama_klaster = MENU_KLASTER[kode_menu]
+    kirim_command(ser, huruf)
+    state["klaster_aktif"] = nama_klaster
+    print(f"{Fore.GREEN}[LOGGER] Klaster bearing aktif sekarang: {nama_klaster}{Style.RESET_ALL}")
 
 
 def hapus_kalibrasi(ser, slot_aktif):
@@ -125,6 +166,16 @@ MENU_KONDISI = {
     "4": ("F", "kondisiBearingFaulting"),
     "5": ("L", "kondisiLubrication"),
     "6": ("D", "kondisiMati"),
+}
+
+# BARU (21 Agustus 2026): daftar klaster bearing. Tambah baris baru di sini
+# kalau nanti ada motor uji ke-3/ke-4 dengan bearing lain -- tapi INGAT,
+# firmware (main.ino baris 296-299) SAAT INI cuma kenal 2 klaster ('V'=index
+# 0, 'W'=index 1), jadi kalau nambah klaster baru di sini, main.ino/
+# SharedTypes.h juga WAJIB ditambah dulu, gak otomatis nyambung sendiri.
+MENU_KLASTER = {
+    "1": ("V", "Klaster 1 (Motor 1 - Maestri): bearing 6203, ~1400RPM"),
+    "2": ("W", "Klaster 2 (Motor 2 - Shimizu): bearing 6201, ~2800RPM"),
 }
 
 # ===================================================================
@@ -178,6 +229,26 @@ def submenu_regime(ser, state):
             pilih_regime(ser, state, int(pilihan))
             return
         print(f"{Fore.RED}[LOGGER] Harus angka 0-9, coba lagi.{Style.RESET_ALL}")
+
+
+def submenu_bearing(ser, state):
+    while True:
+        print(f"\n{Fore.CYAN}--- BEARING / KLASTER (aktif sekarang: {state['klaster_aktif']}) ---{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}  WAJIB dicek/pilih ULANG tiap kali ganti motor uji, SEBELUM kalibrasi.")
+        print(f"  Ini yang nentuin frekuensi BPFO/BPFI/1x/2x yang dicek firmware. Salah pilih")
+        print(f"  = jenis diagnosis (Unbalance/Misalignment/BPFO/BPFI) bisa SALAH, walau deteksi")
+        print(f"  'ada anomali atau tidak' (D2/status Bahaya-Waspada-Normal) tetap benar.{Style.RESET_ALL}")
+        for k, (_, nama) in MENU_KLASTER.items():
+            print(f"  {k}. {nama}")
+        print("  B. Kembali ke menu utama")
+
+        pilihan = input("Pilih: ").strip().upper()
+        if pilihan == "B":
+            return
+        if pilihan in MENU_KLASTER:
+            set_klaster(ser, state, pilihan)
+            return
+        print(f"{Fore.RED}[LOGGER] Pilihan tidak dikenal, coba lagi.{Style.RESET_ALL}")
 
 
 def submenu_sesi_cek(ser, state):
@@ -249,6 +320,7 @@ def menu_utama(ser, state):
         print(f"\n{Fore.MAGENTA}{Style.BRIGHT}=== MENU UTAMA ==="
               f"{Style.RESET_ALL} {Fore.WHITE}(slot aktif: #{state['slot_aktif']}, "
               f"regime: #{state['regime_aktif']}, "
+              f"klaster bearing: {state['klaster_aktif']}, "
               f"kondisi: {_kondisi_aktif}){Style.RESET_ALL}")
         print("  1. Kondisi Motor")
         print("  2. Slot Motor")
@@ -256,6 +328,7 @@ def menu_utama(ser, state):
         print("  4. Kalibrasi")
         print("  5. Sistem")
         print("  6. Regime / Kondisi Operasi (BARU -- pulley kecil/besar, dst)")
+        print("  7. Bearing / Klaster (BARU -- WAJIB dicek tiap ganti motor uji, lihat submenu)")
         print("  0. Selesai, lanjut memantau data")
         print("  Q. Keluar dari program")
 
@@ -272,6 +345,8 @@ def menu_utama(ser, state):
             submenu_sistem(ser, state)
         elif pilihan == "6":
             submenu_regime(ser, state)
+        elif pilihan == "7":
+            submenu_bearing(ser, state)
         elif pilihan == "0":
             return "LANJUT_STREAMING"
         elif pilihan == "Q":
@@ -387,7 +462,15 @@ def main():
 
     print(f"{Fore.GREEN}[LOGGER] Tersambung.{Style.RESET_ALL}")
 
-    state = {"slot_aktif": 0, "regime_aktif": 0}
+    # BARU (21 Agustus 2026): "klaster_aktif" ditambah biar KELIHATAN terus
+    # di header menu (bukan cuma bisa dicek lewat command mentah yang gak
+    # ada tombolnya) -- lihat komentar panjang di set_klaster(). Defaultnya
+    # dikasih peringatan eksplisit karena firmware SENDIRI defaultnya adalah
+    # Klaster 1 (6203) sampai kamu benar-benar pilih lewat menu 7 di bawah,
+    # BUKAN "belum dipilih" beneran -- device tetap jalan pakai klaster itu
+    # diam-diam kalau kamu lupa.
+    state = {"slot_aktif": 0, "regime_aktif": 0,
+             "klaster_aktif": "BELUM DIPILIH LEWAT MENU INI (firmware pakai default Klaster 1/6203!)"}
 
     # BARU: data TIDAK mulai mengalir otomatis. User WAJIB ketik S dulu
     # untuk mulai streaming+logging. Sebelum itu, bisa buka menu (M) dulu

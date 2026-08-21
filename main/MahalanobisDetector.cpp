@@ -174,7 +174,16 @@ const char* getDebounceStatus(const char* newLabel) {
 
     // GANTI: currentFeaturesStd -> currentFeatures (RAW) -- sesuai kontrak
     // updateBaselineIfNormal() yang sudah direvisi di AdaptiveBaselineLearner.cpp
+    #if ENABLE_ONLINE_BASELINE_LEARNING
     updateBaselineIfNormal(currentFeatures, isNormal);
+    #else
+    // FIX (21 Agustus 2026): dimatikan -- lihat penjelasan lengkap di
+    // config.h dekat ENABLE_ONLINE_BASELINE_LEARNING. Baseline sekarang
+    // HANYA berubah lewat kalibrasi eksplisit (tombol 'R' / preset
+    // pabrikan), tidak lagi "belajar" diam-diam dari bacaan sendiri tiap
+    // siklus. (void) di sini cuma buat matiin warning "variable unused".
+    (void)isNormal;
+    #endif
 
     result.rpm_estimated = currentRpm;
     result.mahalanobis_D2 = d2;
@@ -185,19 +194,48 @@ const char* getDebounceStatus(const char* newLabel) {
         float bandEnergies[4];
         Scheduler_GetLatestBandEnergies(bandEnergies);
 
-        float diagBandStd[4];   // BARU: konversi variance->std tiap siklus
-        for (int i = 0; i < 4; i++) diagBandStd[i] = sqrtf(diagBandVar[i] > 1e-8f ? diagBandVar[i] : 1e-8f);
+        // FIX (21 Agustus 2026): FFTProcessor_Process() (FFTProcessor.cpp
+        // baris 106-112 & 194-199) SENGAJA nge-nol-in ke-4 bandEnergies_out
+        // setiap siklus spektrum belum "matang" -- FFT baru dianggap valid
+        // sekali per SPECTRAL_AVG_COUNT (=12) akumulasi, jadi ~11 dari 12
+        // pemanggilan di sini nerima {0,0,0,0}, BUKAN bacaan getaran asli.
+        // Sebelumnya nol ini tetap dimasukkan ke Diagnosis_Classify() --
+        // dibandingkan ke baseline yang meannya jauh di atas nol (lihat
+        // presetMesin2_bandMean di FactoryPresets.h, ~1700-an), Z-score-nya
+        // jadi SANGAT negatif, dan `Diagnosis_Classify` membacanya sebagai
+        // "NORMAL" (di bawah ambang) walau motornya lagi jelas rusak. Data
+        // uji `kondisiUnbalance` 20:41 buktikan ini: diagnosis "NORMAL" di
+        // 1320/1481 baris (89%) walau status sudah benar "Bahaya" di 91%
+        // baris yang SAMA -- bandEnergies waktu itu 0 di >75% baris (lihat
+        // e_unbalance/e_misalign/e_bpfo/e_bpfi, median-nya 0.0). Ini bug
+        // yang SAMA KELUARGANYA dengan fix RPM=0 di komentar atas file ini
+        // (nol yang bukan bacaan asli, dibaca "NORMAL" yang menyesatkan).
+        // Fix: kalau bandEnergies masih placeholder nol (belum ada spektrum
+        // baru), LEWATI klasifikasi diagnosis siklus ini -- biarkan
+        // diagnosis_label tetap default "N/A" (sudah di-set di awal fungsi
+        // ini), JANGAN dipaksa "NORMAL" dari data yang bukan bacaan asli.
+        bool bandEnergiesFresh = (bandEnergies[0] != 0.0f || bandEnergies[1] != 0.0f ||
+                                   bandEnergies[2] != 0.0f || bandEnergies[3] != 0.0f);
+        if (bandEnergiesFresh) {
+            float diagBandStd[4];   // BARU: konversi variance->std tiap siklus
+            for (int i = 0; i < 4; i++) diagBandStd[i] = sqrtf(diagBandVar[i] > 1e-8f ? diagBandVar[i] : 1e-8f);
 
-        char diagLabel[20];
-        float diagConfidence = 0.0f;
+            char diagLabel[20];
+            float diagConfidence = 0.0f;
 
-        uint8_t diagFlags = 0;
-        Diagnosis_Classify(bandEnergies, diagBandMean, diagBandStd, diagLabel, &diagConfidence, &diagFlags);
-        strncpy(result.diagnosis_label, diagLabel, sizeof(result.diagnosis_label) - 1);
-        result.diagnosis_label[sizeof(result.diagnosis_label) - 1] = '\0';
-        result.diagnosis_confidence = diagConfidence;
+            uint8_t diagFlags = 0;
+            Diagnosis_Classify(bandEnergies, diagBandMean, diagBandStd, diagLabel, &diagConfidence, &diagFlags);
+            strncpy(result.diagnosis_label, diagLabel, sizeof(result.diagnosis_label) - 1);
+            result.diagnosis_label[sizeof(result.diagnosis_label) - 1] = '\0';
+            result.diagnosis_confidence = diagConfidence;
 
-        updateBandBaselineIfNormal(diagBandMean, diagBandVar, 4, bandEnergies, isNormal);   // BARU
+            #if ENABLE_ONLINE_BASELINE_LEARNING
+            updateBandBaselineIfNormal(diagBandMean, diagBandVar, 4, bandEnergies, isNormal);   // BARU
+            #endif
+            // FIX (21 Agustus 2026): baseline band diagnosis (Unbalance/Misalign/
+            // BPFO/BPFI) ikut dimatikan adaptasi online-nya, sama alasannya
+            // seperti baseline Mahalanobis utama -- lihat config.h.
+        }
     }
     #endif
     // BARU: seluruh blok ini -- diagnosis audio, modul lama yang baru disambung
@@ -217,7 +255,11 @@ const char* getDebounceStatus(const char* newLabel) {
         result.audio_diagnosis_label[sizeof(result.audio_diagnosis_label) - 1] = '\0';
         result.audio_diagnosis_confidence = audioConf;
 
+        #if ENABLE_ONLINE_BASELINE_LEARNING
         updateBandBaselineIfNormal(audioBandMean, audioBandVar, AUDIO_BAND_COUNT, audioBandEnergies, isNormal);
+        #endif
+        // FIX (21 Agustus 2026): baseline band audio ikut dimatikan adaptasi
+        // online-nya, alasan sama -- lihat config.h.
     }
 
     return result;

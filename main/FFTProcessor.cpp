@@ -7,7 +7,14 @@
 
 #define SAMPLE_RATE VIBRATION_SAMPLE_RATE_HZ
 #define FR_MIN_HZ 5.0
-#define FR_MAX_HZ 60.0
+#define FR_MAX_HZ 50.0
+// FIX (21 Agustus 2026): sebelumnya 60.0 di file ini vs 50.0 di
+// RPMEstimator.cpp -- dua salinan angka yang sama tapi beda nilai.
+// Yang beneran nentuin RPM reliable/tidak itu RPMEstimator.cpp (5-50Hz),
+// jadi angka DIAGNOSTIK di file ini (dipakai buat print top3 puncak,
+// lihat FFTProcessor_Process di bawah) disamain ke 50.0 juga -- biar
+// yang kamu lihat di Serial Monitor sama persis dengan jendela yang
+// beneran dipakai buat keputusan reliable.
 
 double vReal[FFT_SAMPLES];
 double vImag[FFT_SAMPLES];
@@ -209,8 +216,11 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
         }
     }
 
-    reliableStreak++;
-    if (reliableStreak >= 2) stableRPM = fr_rpm;
+    // FIX (21 Agustus 2026): 4 baris ini sebelumnya keulang 2x (copy-paste)
+    // -- efeknya syarat ">=2 siklus berturut baru dipercaya" tembus di
+    // SIKLUS PERTAMA juga (karena counter-nya nambah 2x dalam 1x panggilan
+    // fungsi ini), jadi debounce-nya nggak beneran nunggu 2 siklus konsisten
+    // kayak niatnya. Sekarang cuma sekali, sesuai maksud aslinya.
     reliableStreak++;
     if (reliableStreak >= 2) stableRPM = fr_rpm;
     *rpm_out = stableRPM;

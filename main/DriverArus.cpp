@@ -80,7 +80,18 @@ void TaskDriverArus(void *pvParameters) {
             float meanSquare = (float)(sumSquared / ARUS_RMS_SAMPLE_COUNT);
             float rmsADC = sqrtf(meanSquare);
             g_lastRawADC = rmsADC;
+            // FIX (21 Agustus 2026): print ini sebelumnya TANPA syarat -- jalan
+            // ~10x/detik di task terpisah (TaskDriverArus), gak nurut ke flag
+            // DEBUG_VERBOSE yang sudah ada di config.h ("0 = sesi ambil data
+            // resmi/JSON bersih"). Karena ESP32 dual-core, print ini bisa
+            // nyelip di tengah baris JSON yang lagi dikirim loop utama, motong
+            // baris itu jadi rusak -- itu penyebab "[LOGGER] Baris JSON rusak,
+            // dilewati." yang berulang-ulang di layar. Device TIDAK hang, cuma
+            // Serial-nya kebanjiran print debug ini. Sekarang cuma nyala kalau
+            // DEBUG_VERBOSE=1 (mode debug manual), mati total pas sesi resmi.
+            #if DEBUG_VERBOSE
             Serial.printf("[ARUS-DIAG] dcBaseline=%.2f rmsADC=%.4f\n", dcBaseline, rmsADC);
+            #endif
 
             float calculatedCurrent = rmsADC * ARUS_CAL_FACTOR;
             if (calculatedCurrent < ARUS_NOISE_GATE) {

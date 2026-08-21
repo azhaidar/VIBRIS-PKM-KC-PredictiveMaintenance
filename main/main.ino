@@ -185,6 +185,28 @@ void selectMachineBaselineSlot(int slot) {
     if (slot == currentMachineSlot) return;   // sudah di mesin ini, gak perlu ngapa-ngapain
     currentMachineSlot = slot;
     applyMachineBaseline(currentMachineSlot, currentRegime);
+
+    // FIX (21 Agustus 2026): sebelumnya ganti SLOT (mesin mana) dan ganti
+    // KLASTER BEARING (geometri yang dipakai hitung BPFO/BPFI) itu 2 command
+    // TERPISAH ('0'-'9' vs 'V'/'W') yang HARUS SAMA-SAMA diingat dikirim
+    // manual tiap pindah motor uji. Terbukti gampang kelewat di lapangan --
+    // sudah kejadian slot dipindah tapi klaster kelupaan, bikin band
+    // BPFO/BPFI ngecek frekuensi bearing yang salah motor. Solusi kemarin
+    // (nyuruh kamu inget urutan tombolnya) itu SALAH ARAH -- itu nyuruh
+    // manusia jadi lebih teliti, bukan bikin sistemnya susah salah.
+    // Sekarang klaster IKUT OTOMATIS sesuai slot: di setup kalian saat ini
+    // slot dan klaster memang SELALU berpasangan 1-ke-1 (slot 0 = Mesin 1 =
+    // Klaster 1/6203, slot 1 = Mesin 2 = Klaster 2/6201), jadi nomor slot
+    // bisa langsung dipakai sebagai nomor klaster. setBearingCluster() di
+    // FFTProcessor.cpp sendiri sudah punya pengecekan batas (slot di luar
+    // 0-1 cuma di-print error, gak ubah apa-apa), jadi aman dipanggil apa
+    // adanya di sini. Kalau nanti nambah mesin ke-3 dengan bearing lain:
+    // tambah entry baru di BEARING_TABLE (SharedTypes.h) index ke-2, baris
+    // ini otomatis ikut kepakai tanpa perlu diubah lagi. Menu 7 (Bearing/
+    // Klaster) di loggerserial.py TETAP ada buat override manual (misal mau
+    // eksperimen coba klaster lain di mesin yang sama), tapi sekarang itu
+    // OPSIONAL -- bukan langkah wajib tiap ganti slot lagi.
+    setBearingCluster(slot);
 }
 
 // BARU: sama kayak selectMachineBaselineSlot(), tapi buat ganti KONDISI
@@ -370,13 +392,22 @@ void loop() {
         result.status_label[sizeof(result.status_label) - 1] = '\0';
     } else {
         result = runDetectionCycle();
+
+        // Health Score
+        // FIX (21 Agustus 2026): blok ini dipindah ke ATAS updateCheckSession().
+        // Sebelumnya updateCheckSession() dipanggil DULUAN, padahal saat itu
+        // result.health_score masih 0.0 (nilai default dari runDetectionCycle()
+        // yang baru saja menimpa 'result' sepenuhnya) -- health_score yang
+        // BENAR baru dihitung 2 baris di bawahnya. Akibatnya CheckSession.cpp
+        // selalu menjumlahkan 0.0, jadi avg_health_score di ringkasan sesi
+        // SELALU 0.0 walau motor sehat. Fix: hitung health_score DULU, baru
+        // panggil updateCheckSession() supaya dia membaca angka yang sudah jadi.
+        float hs = 100.0f - (result.mahalanobis_D2 / getChiSquare99()) * 100.0f;
+        result.health_score = constrain(hs, 0.0f, 100.0f);
+
         if (isCheckSessionActive()) {
             updateCheckSession(result, merged.suhu);   // 'merged' sesuaikan nama variabel aslinya
         }
-
-        // Health Score
-        float hs = 100.0f - (result.mahalanobis_D2 / getChiSquare99()) * 100.0f;
-        result.health_score = constrain(hs, 0.0f, 100.0f);
 
         // Trend
         static float sevHistory[30] = {0};

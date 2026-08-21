@@ -49,7 +49,30 @@
 #define ARUS_CAL_FACTOR      0.0242f   // Koefisien pengali kalibrasi nilai ADC ke Ampere
 #define ARUS_NOISE_GATE      0.5f
 // Digital Signal Processing Configuration
-#define FFT_SAMPLES          256     // Jumlah sampel FFT getaran (Kunci lintas file)
+// FIX (21 Agustus 2026): dinaikkan dari 256 -> 512. Alasannya resolusi
+// frekuensi = VIBRATION_SAMPLE_RATE_HZ / FFT_SAMPLES = 1230/256 = ~4,8Hz
+// per "kotak" -- itu LEBIH LEBAR dari jendela toleransi ±10% band Unbalance
+// (oneX_hz ~23,33Hz -> jendelanya cuma ~4,66Hz), jadi jendela itu nyaris
+// cuma nangkep 1 kotak, gampang meleset kalau RPM motor geser dikit dari
+// 1400 asumsi. Di 512, resolusi jadi ~2,4Hz/kotak -- band Unbalance dapet
+// ~2 kotak, lebih ada toleransi.
+// KONSEKUENSI yang harus kamu tahu: waktu 1 siklus FFT (FFT_SAMPLES /
+// VIBRATION_SAMPLE_RATE_HZ) naik dari ~208ms jadi ~416ms. Karena
+// SPECTRAL_AVG_COUNT (di FFTProcessor.cpp) masih 12 kali rata-rata SEBELUM
+// keluar 1 hasil, total jeda per hasil naik dari ~2,5 detik jadi ~5 detik.
+// Ini SENGAJA tidak aku kurangi SPECTRAL_AVG_COUNT-nya buat kompensasi --
+// karena SNR kamu sekarang masih jadi masalah utama (lihat sesi 21:40),
+// dan rata-rata 12 siklus itu yang justru lagi nolongin SNR kamu. Kalau
+// nanti mounting udah beres dan SNR udah stabil tinggi, BOLEH pertimbangkan
+// turunkan SPECTRAL_AVG_COUNT buat balikin kecepatan respons.
+// CATATAN LAIN (belum jadi masalah di 512, tapi WAJIB dicek kalau nanti
+// FFT_SAMPLES dinaikkan lagi lebih tinggi): RPMEstimator.cpp baris 59 punya
+// array `noiseSamples[256]` yang UKURANNYA HARDCODE, bukan ikut FFT_SAMPLES.
+// Di 512 masih aman (jumlah sampel noise yang dikumpulkan ~236, di bawah
+// 256), tapi kalau FFT_SAMPLES naik lagi ke 1024 misalnya, larik itu bakal
+// kepotong (guard `noiseCount < 256` mencegah crash, tapi noise floor-nya
+// jadi dihitung dari data yang gak lengkap) -- perlu dinaikkan juga saat itu.
+#define FFT_SAMPLES          512     // Jumlah sampel FFT getaran (Kunci lintas file)
 // Sistem Monitoring Configuration
 #define TICK_DELAY_REPORT    100   // Interval Serial Print pelaporan data (ms)
 #define VIBRATION_SAMPLE_RATE_HZ 1230U
@@ -96,3 +119,31 @@
 #define DEBUG_VERBOSE 0   // 0 = sesi ambil data resmi (JSON bersih), 1 = debug manual
 #define CHECK_SESSION_DURATION_MS 60000UL   // 1 menit nanti ubah terserah kalian dah ya
 #define ENABLE_ARUS_SENSOR 1   // AKTIF arusnya
+
+// FIX (21 Agustus 2026): MATIKAN pembelajaran baseline online (yang tadinya
+// jalan otomatis di SETIAP siklus deteksi lewat updateBaselineIfNormal() /
+// updateBandBaselineIfNormal() di MahalanobisDetector.cpp). Ditemukan dari
+// data uji `vibris_20260821_1823_kondisiUnbalance.csv` (baut sengaja
+// dipasang di shaft, ground_truth UNBALANCE 2926 baris): getaran mentah
+// (rms_v) TIDAK turun sepanjang sesi (3.81 -> 4.67 -> 4.78 per ~42 detik),
+// tapi status yang dibaca sistem melompat dari 52% Normal ke 98.6% Normal
+// dalam waktu yang SAMA. Sebabnya: baseline "belajar" dari keputusannya
+// SENDIRI tiap siklus (feedback loop tertutup) -- begitu 1 siklus kebaca
+// Normal (walau keliru/borderline), baseline langsung digeser dikit ke arah
+// bacaan itu, bikin siklus berikutnya makin gampang kebaca Normal juga,
+// snowball sampai motor yang sengaja dirusak kebaca sehat.
+//
+// KENAPA DIMATIKAN TOTAL (bukan cuma dikurangi kecepatannya): VIBRIS ini
+// alat PORTABLE (1 alat dipindah-pindah ke banyak mesin), bukan node yang
+// nempel permanen di 1 mesin selama berbulan-bulan. Fitur ini awalnya
+// dimaksudkan buat "belajar keausan bearing yang wajar, pelan-pelan selama
+// berbulan-bulan" -- tapi kalau alatnya dipindah ke mesin lain sebelum itu
+// kejadian, fitur ini gak akan pernah kepakai sesuai niatnya, dan yang ada
+// cuma risiko fault ketutupan diam-diam kayak di data di atas. Referensi
+// "sehat" sekarang HARUS berasal dari sumber eksplisit (preset pabrikan di
+// FactoryPresets.h, atau kalibrasi manual tombol 'R') dan tetap DIAM selama
+// sesi cek berlangsung -- baru boleh berubah kalau kamu eksplisit kalibrasi
+// ulang lagi. Set ke 1 HANYA kalau nanti mau eksperimen ulang fitur belajar
+// bertahap ini (Opsi B di diskusi) -- itu butuh desain "rem"/drift-cap dulu,
+// belum ada di kode ini, JANGAN diaktifkan mentah-mentah tanpa itu.
+#define ENABLE_ONLINE_BASELINE_LEARNING 0
