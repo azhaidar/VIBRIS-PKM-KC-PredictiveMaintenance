@@ -1,6 +1,6 @@
 # ==============================================================================
-# VIBRIS INDUSTRIAL HMI - 1800+ LINES ENTERPRISE ENGINE (UNIFIED DUAL-MODE HMI)
-# Integrasi Fitur Kalibrasi 3 Menit & Preset Permanen (Indentation & NoneType Fixed)
+# VIBRIS INDUSTRIAL HMI - 1800+ LINES ENTERPRISE ENGINE (UNIFIED DUAL-MODE)
+# Pembaruan: Penambahan Mode Tanpa Kalibrasi (Direct Monitoring / Tanpa Baseline R)
 # ==============================================================================
 
 import sys
@@ -27,7 +27,7 @@ except ImportError:
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
     QGridLayout, QStackedWidget, QFrame, QListWidget, QComboBox, QMessageBox,
-    QSlider, QSizePolicy, QProgressBar, QLineEdit, QTableWidget, QTableWidgetItem
+    QSlider, QSizePolicy, QProgressBar, QLineEdit, QDialog, QFormLayout
 )
 from PyQt5.QtCore import QTimer, Qt, QPoint, QEvent
 from PyQt5.QtGui import QFont, QPainter, QLinearGradient, QColor, QPolygon, QPen, QBrush
@@ -59,6 +59,79 @@ D2_THRESHOLD_WASPADA = 9.49
 D2_THRESHOLD_BAHAYA = 13.28
 
 STATUS_SEVERITY = {"diam": -1, "normal": 0, "waspada": 1, "bahaya": 2}
+
+# ===================== MODAL FORM TAMBAH SLOT (DENGAN OPSI MODE TANPA KALIBRASI) =====================
+class AddMachineDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Tambah Slot Mesin & Protokol Hardware")
+        self.setFixedSize(300, 240)
+        self.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; font-family: Arial; font-size: 8px;")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
+
+        lbl_head = QLabel("KONFIGURASI SLOT MESIN BARU")
+        lbl_head.setStyleSheet(f"font-weight: bold; color: {COL_ACCENT}; font-size: 9px;")
+        layout.addWidget(lbl_head)
+
+        form_layout = QFormLayout()
+        form_layout.setSpacing(4)
+
+        self.txt_name = QLineEdit()
+        self.txt_name.setPlaceholderText("Contoh: Konveyor Utama")
+        self.txt_name.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: {COL_TEXT_LIGHT}; border: 1px solid {COL_TEXT_DIM}; padding: 2px;")
+        form_layout.addRow("Nama Mesin:", self.txt_name)
+
+        self.cmb_slot = QComboBox()
+        self.cmb_slot.addItems([str(i) for i in range(10)])
+        self.cmb_slot.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: {COL_TEXT_LIGHT};")
+        form_layout.addRow("Slot (0-9):", self.cmb_slot)
+
+        self.cmb_bearing = QComboBox()
+        self.cmb_bearing.addItems(["Rolling Bearing (B)", "Bushing / Tanpa Bearing (N)"])
+        self.cmb_bearing.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: {COL_TEXT_LIGHT};")
+        form_layout.addRow("Tipe Bearing:", self.cmb_bearing)
+
+        self.cmb_cluster = QComboBox()
+        self.cmb_cluster.addItems(["Klaster A (~1400 RPM - V)", "Klaster B (~2800 RPM - W)"])
+        self.cmb_cluster.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: {COL_TEXT_LIGHT};")
+        form_layout.addRow("Klaster RPM:", self.cmb_cluster)
+
+        self.cmb_calibration_mode = QComboBox()
+        self.cmb_calibration_mode.addItems(["Dengan Kalibrasi (180s Baseline)", "Tanpa Kalibrasi (Direct Monitoring)"])
+        self.cmb_calibration_mode.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: {COL_TEXT_LIGHT};")
+        form_layout.addRow("Mode Operasi:", self.cmb_calibration_mode)
+
+        layout.addLayout(form_layout)
+
+        btn_layout = QHBoxLayout()
+        self.btn_save = QPushButton("Simpan Konfigurasi")
+        self.btn_save.setStyleSheet(f"background-color: {COL_ACCENT}; color: #000; font-weight: bold; padding: 4px;")
+        self.btn_save.clicked.connect(self.accept)
+
+        self.btn_cancel = QPushButton("Batal")
+        self.btn_cancel.setStyleSheet("background-color: #444; color: #fff; padding: 4px;")
+        self.btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addWidget(self.btn_save)
+        btn_layout.addWidget(self.btn_cancel)
+        layout.addLayout(btn_layout)
+
+    def get_data(self):
+        is_no_calib = (self.cmb_calibration_mode.currentIndex() == 1)
+        return {
+            "name": self.txt_name.text().strip() or "Mesin Baru",
+            "icon": "⚡" if is_no_calib else "🏭",
+            "slot_char": self.cmb_slot.currentText(),
+            "bearing_cmd": "B" if self.cmb_bearing.currentIndex() == 0 else "N",
+            "cluster_cmd": "V" if self.cmb_cluster.currentIndex() == 0 else "W",
+            "no_calib": is_no_calib,
+            "rpm_cluster": "Custom RPM",
+            "baseline_d2": 9.49,
+            "fw_cluster": "Custom"
+        }
 
 # ===================== KOMPONEN KUSTOM GAUGE & GRAFIK =====================
 class _GaugeBar(QWidget):
@@ -115,15 +188,15 @@ class GradientGauge(QWidget):
         layout.setSpacing(1)
 
         self.lbl_title = QLabel(title)
-        self.lbl_title.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_TEXT_LIGHT};")
+        self.lbl_title.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {COL_TEXT_LIGHT};")
         layout.addWidget(self.lbl_title)
 
         self.bar = _GaugeBar(min_val, max_val)
-        self.bar.setFixedHeight(16)
+        self.bar.setFixedHeight(18)
         layout.addWidget(self.bar)
 
         self.lbl_status = QLabel("Normal")
-        self.lbl_status.setStyleSheet(f"font-size: 8px; color: {COL_TEXT_DIM};")
+        self.lbl_status.setStyleSheet(f"font-size: 10px; color: {COL_TEXT_DIM};")
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
@@ -213,11 +286,21 @@ class Dashboard(QWidget):
         self.logdet_timer = QTimer(self)
         self.logdet_timer.timeout.connect(self._logdet_step)
 
-        # Timer Kalibrasi 3 Menit (Hanya untuk mesin baru indeks >= 2)
         self.calibration_timer = QTimer(self)
         self.calibration_timer.timeout.connect(self._calibration_countdown_tick)
         self.calibration_time_left = 180
         self.calibrating_machine_idx = -1
+
+        self.delay_calibration_timer = QTimer(self)
+        self.delay_calibration_timer.setSingleShot(True)
+        self.delay_calibration_timer.timeout.connect(self._execute_actual_calibration)
+        self.pending_calibration_idx = -1
+        self.delay_seconds_left = 4
+
+        self.check_session_timer = QTimer(self)
+        self.check_session_timer.timeout.connect(self._check_session_countdown_tick)
+        self.check_session_time_left = 60
+        self.is_check_session_active = False
 
         self.current_v = None
         self.current_vx = None
@@ -243,12 +326,11 @@ class Dashboard(QWidget):
         self.ser = None
         self.serial_connected = False
 
-        # Mesin 0 & 1 adalah PRESET PERMANEN (Tanpa Kalibrasi)
         self.machines = [
-            {"name": "Blower Industri UMKM (Preset)", "icon": "🌀", "bearing_cmd": "B", "rpm_cluster": "Medium (1000-3000 RPM)", "baseline_d2": 9.49, "fw_cluster": "Klaster B"},
-            {"name": "Motor Induksi Pompa Air (Preset)", "icon": "💧", "bearing_cmd": "A", "rpm_cluster": "Low (< 1000 RPM)", "baseline_d2": 8.00, "fw_cluster": "Klaster A"},
+            {"name": "Blower Industri UMKM", "icon": "🌀", "slot_char": "0", "bearing_cmd": "B", "cluster_cmd": "W", "no_calib": False, "rpm_cluster": "Medium (2800 RPM)", "baseline_d2": 9.49, "fw_cluster": "Klaster B"},
+            {"name": "Motor Induksi Pompa Air", "icon": "💧", "slot_char": "1", "bearing_cmd": "A", "cluster_cmd": "V", "no_calib": False, "rpm_cluster": "Low (1400 RPM)", "baseline_d2": 8.00, "fw_cluster": "Klaster A"},
         ]
-        self.selected_machine_idx = -1
+        self.selected_machine_idx = 0
         self.machine_delete_mode = False
         self.is_technician_mode = True
 
@@ -260,8 +342,8 @@ class Dashboard(QWidget):
         # HEADER UTAMA
         # =========================================================================
         header = QHBoxLayout()
-        header.setSpacing(1)
-        header.setContentsMargins(2, 1, 2, 1)
+        header.setSpacing(2)
+        header.setContentsMargins(2, 2, 2, 2)
         self.header_frame = QFrame()
         self.header_frame.setStyleSheet(
             f"background-color: {COL_HEADER_BG}; border-radius: 3px; "
@@ -269,63 +351,70 @@ class Dashboard(QWidget):
         )
         self.header_frame.setLayout(header)
 
-        self.lbl_machine_active = QPushButton("⚙️  - Pilih Mesin -")
+        self.lbl_machine_active = QPushButton("⚙️ Slot [0]")
         self.lbl_machine_active.setStyleSheet(
-            f"QPushButton {{ background-color: {COL_ACCENT_DIM}; color: {COL_TEXT_LIGHT}; font-size: 7px; "
-            f"font-weight: bold; padding: 1px 2px; border: 1px solid #2a3542; border-radius: 2px; text-align: left; }}"
+            f"QPushButton {{ background-color: {COL_ACCENT_DIM}; color: {COL_TEXT_LIGHT}; font-size: 8px; "
+            f"font-weight: bold; padding: 3px 4px; border: 1px solid #2a3542; border-radius: 2px; text-align: left; }}"
             f"QPushButton:hover {{ border: 1px solid {COL_ACCENT}; }}"
         )
-        self.lbl_machine_active.clicked.connect(lambda: self._change_page(4))
+        self.lbl_machine_active.clicked.connect(lambda: self._change_page(2 if self.is_technician_mode else 1))
         header.addWidget(self.lbl_machine_active, 2)
 
         def _header_btn_style(border_color, text_color):
             return (
                 f"QPushButton {{ background-color: transparent; color: {text_color}; "
-                f"font-weight: bold; font-size: 6px; padding: 1px 2px; "
+                f"font-weight: bold; font-size: 7px; padding: 3px 3px; "
                 f"border: 1px solid {border_color}; border-radius: 2px; }}"
                 f"QPushButton:hover {{ background-color: {border_color}; color: #101216; }}"
             )
 
-        self.btn_cek1m = QPushButton("SESI(K)")
-        self.btn_cek1m.setStyleSheet(_header_btn_style(COL_OK, COL_OK))
-        self.btn_cek1m.clicked.connect(lambda: self._send_command('K'))
-        header.addWidget(self.btn_cek1m)
+        self.top_action_buttons_container = QWidget()
+        tac_layout = QHBoxLayout(self.top_action_buttons_container)
+        tac_layout.setContentsMargins(0, 0, 0, 0)
+        tac_layout.setSpacing(1)
 
-        self.btn_slot_res = QPushButton("SLOT(P)")
-        self.btn_slot_res.setStyleSheet(_header_btn_style(COL_ACCENT, COL_ACCENT))
-        self.btn_slot_res.clicked.connect(lambda: self._send_command('P'))
-        header.addWidget(self.btn_slot_res)
+        self.btn_cek60s = QPushButton("CEK(K)")
+        self.btn_cek60s.setStyleSheet(_header_btn_style(COL_OK, COL_OK))
+        self.btn_cek60s.clicked.connect(self._trigger_check_session)
+        tac_layout.addWidget(self.btn_cek60s)
 
-        self.btn_del_base = QPushButton("BASE(Z)")
+        self.btn_slot_summary = QPushButton("RINGKAS(P)")
+        self.btn_slot_summary.setStyleSheet(_header_btn_style(COL_ACCENT, COL_ACCENT))
+        self.btn_slot_summary.clicked.connect(lambda: self._send_command('P'))
+        tac_layout.addWidget(self.btn_slot_summary)
+
+        self.btn_del_base = QPushButton("HAPUS(Z)")
         self.btn_del_base.setStyleSheet(_header_btn_style(COL_WARN, COL_WARN))
         self.btn_del_base.clicked.connect(lambda: self._send_command('Z'))
-        header.addWidget(self.btn_del_base)
+        tac_layout.addWidget(self.btn_del_base)
 
-        self.btn_recal = QPushButton("KALIBRASI")
+        self.btn_recal = QPushButton("KALIB(R)")
         self.btn_recal.setStyleSheet(_header_btn_style(COL_ACCENT, COL_ACCENT))
-        self.btn_recal.clicked.connect(lambda: self._send_command('R'))
-        header.addWidget(self.btn_recal)
+        self.btn_recal.clicked.connect(self._trigger_recalibration)
+        tac_layout.addWidget(self.btn_recal)
 
-        self.btn_reboot_esp = QPushButton("REBOOT")
+        self.btn_reboot_esp = QPushButton("REBOOT(X)")
         self.btn_reboot_esp.setStyleSheet(_header_btn_style(COL_BAD, COL_BAD))
         self.btn_reboot_esp.clicked.connect(lambda: self._send_command('X'))
-        header.addWidget(self.btn_reboot_esp)
+        tac_layout.addWidget(self.btn_reboot_esp)
 
-        self.btn_debug = QPushButton("DEBUG")
+        self.btn_debug = QPushButton("DBG")
         self.btn_debug.setStyleSheet(_header_btn_style(COL_TEXT_DIM, COL_TEXT_DIM))
         self.btn_debug.clicked.connect(self._show_debug_info)
-        header.addWidget(self.btn_debug)
+        tac_layout.addWidget(self.btn_debug)
 
-        self.btn_mode_toggle = QPushButton("MODE: ENGINEER")
+        header.addWidget(self.top_action_buttons_container)
+
+        self.btn_mode_toggle = QPushButton("MODE: ENG")
         self.btn_mode_toggle.setStyleSheet(
-            "QPushButton { background-color: #fbbf24; color: #101216; font-weight: bold; font-size: 6px; padding: 2px; border-radius: 2px; border: 1px solid #fbbf24; }"
+            "QPushButton { background-color: #fbbf24; color: #101216; font-weight: bold; font-size: 7px; padding: 3px; border-radius: 2px; border: 1px solid #fbbf24; }"
             "QPushButton:hover { background-color: #f59e0b; }"
         )
         self.btn_mode_toggle.clicked.connect(self._toggle_mode_system)
         header.addWidget(self.btn_mode_toggle)
 
         self.lbl_conn_dot = QLabel("●")
-        self.lbl_conn_dot.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_BAD};")
+        self.lbl_conn_dot.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_BAD};")
         header.addWidget(self.lbl_conn_dot)
 
         time_box = QVBoxLayout()
@@ -333,12 +422,12 @@ class Dashboard(QWidget):
         time_box.setContentsMargins(0, 0, 0, 0)
 
         self.time_lbl = QLabel("--:--:--")
-        self.time_lbl.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_OK};")
+        self.time_lbl.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_OK};")
         self.time_lbl.setAlignment(Qt.AlignRight)
         time_box.addWidget(self.time_lbl)
 
         self.date_lbl = QLabel("--/--/----")
-        self.date_lbl.setStyleSheet(f"font-size: 5px; color: {COL_OK};")
+        self.date_lbl.setStyleSheet(f"font-size: 6px; color: {COL_OK};")
         self.date_lbl.setAlignment(Qt.AlignRight)
         time_box.addWidget(self.date_lbl)
 
@@ -351,26 +440,27 @@ class Dashboard(QWidget):
         self.stack = QStackedWidget()
         
         self.stack.addWidget(self._page_awam_beranda())     # Index 0
-        self.stack.addWidget(self._page_awam_riwayat())     # Index 1
-        self.stack.addWidget(self._page_awam_rekomendasi()) # Index 2
-        self.stack.addWidget(self._page_awam_mesin_saya())  # Index 3
+        self.stack.addWidget(self._page_awam_mesin_saya())  # Index 1
         
-        self.stack.addWidget(self._page_machine_select())   # Index 4
-        self.stack.addWidget(self._page_log_detail())       # Index 5
-        self.stack.addWidget(self._page_raw())              # Index 6
-        self.stack.addWidget(self._page_recording())        # Index 7
-        self.stack.addWidget(self._page_processed())        # Index 8
-        self.stack.addWidget(self._page_summary())          # Index 9
+        self.stack.addWidget(self._page_machine_select())   # Index 2
+        self.stack.addWidget(self._page_log_detail())       # Index 3
+        self.stack.addWidget(self._page_raw())              # Index 4
+        self.stack.addWidget(self._page_recording())        # Index 5
+        self.stack.addWidget(self._page_processed())        # Index 6
+        self.stack.addWidget(self._page_summary())          # Index 7
         
         root.addWidget(self.stack, 1)
 
-        nav_bottom = QHBoxLayout()
+        # Navigasi Bawah
+        self.nav_bottom_widget = QWidget()
+        nav_bottom = QHBoxLayout(self.nav_bottom_widget)
+        nav_bottom.setContentsMargins(0, 0, 0, 0)
         nav_bottom.setSpacing(2)
         
-        self.btn_nav1 = QPushButton("RAW READING")
-        self.btn_nav2 = QPushButton("LOGS SAVES")
-        self.btn_nav3 = QPushButton("PROCESSED (FFT)")
-        self.btn_nav4 = QPushButton("SUMMARY")
+        self.btn_nav1 = QPushButton("BERANDA")
+        self.btn_nav2 = QPushButton("MESIN SAYA")
+        self.btn_nav3 = QPushButton("CEK STATUS")
+        self.btn_nav4 = QPushButton("REBOOT ESP")
 
         self.menu_buttons = [self.btn_nav1, self.btn_nav2, self.btn_nav3, self.btn_nav4]
 
@@ -380,7 +470,7 @@ class Dashboard(QWidget):
             btn.clicked.connect(lambda checked, idx=i: self._change_page_by_nav(idx))
             nav_bottom.addWidget(btn)
         
-        root.addLayout(nav_bottom)
+        root.addWidget(self.nav_bottom_widget)
 
         self._init_serial_connection()
 
@@ -398,26 +488,32 @@ class Dashboard(QWidget):
 
     def _apply_mode_ui_layout(self):
         if self.is_technician_mode:
-            self.btn_mode_toggle.setText("MODE: ENGINEER")
+            self.btn_mode_toggle.setText("MODE: ENG")
             self.btn_mode_toggle.setStyleSheet(
-                "QPushButton { background-color: #fbbf24; color: #101216; font-weight: bold; font-size: 6px; padding: 2px; border-radius: 2px; border: 1px solid #fbbf24; }"
+                "QPushButton { background-color: #fbbf24; color: #101216; font-weight: bold; font-size: 7px; padding: 3px; border-radius: 2px; border: 1px solid #fbbf24; }"
                 "QPushButton:hover { background-color: #f59e0b; }"
             )
+            self.top_action_buttons_container.show()
+            
             self.btn_nav1.setText("RAW READING")
             self.btn_nav2.setText("LOGS SAVES")
             self.btn_nav3.setText("PROCESSED (FFT)")
             self.btn_nav4.setText("SUMMARY")
-            self._change_page(6)
+            
+            self._change_page(4)
         else:
             self.btn_mode_toggle.setText("MODE: AWAM")
             self.btn_mode_toggle.setStyleSheet(
-                "QPushButton { background-color: #38bdf8; color: #101216; font-weight: bold; font-size: 6px; padding: 2px; border-radius: 2px; border: 1px solid #38bdf8; }"
+                "QPushButton { background-color: #38bdf8; color: #101216; font-weight: bold; font-size: 7px; padding: 3px; border-radius: 2px; border: 1px solid #38bdf8; }"
                 "QPushButton:hover { background-color: #0ea5e9; }"
             )
+            self.top_action_buttons_container.hide()
+            
             self.btn_nav1.setText("BERANDA")
-            self.btn_nav2.setText("RIWAYAT")
-            self.btn_nav3.setText("REKOMENDASI")
-            self.btn_nav4.setText("MESIN SAYA")
+            self.btn_nav2.setText("MESIN SAYA")
+            self.btn_nav3.setText("CEK STATUS")
+            self.btn_nav4.setText("REBOOT ESP")
+            
             self._change_page(0)
 
     def _menu_style(self, active):
@@ -430,16 +526,60 @@ class Dashboard(QWidget):
 
     def _change_page_by_nav(self, nav_idx):
         if self.is_technician_mode:
-            stack_mapping = {0: 6, 1: 7, 2: 8, 3: 9}
-            target_stack = stack_mapping.get(nav_idx, 6)
+            stack_mapping = {0: 4, 1: 5, 2: 6, 3: 7}
+            target_stack = stack_mapping.get(nav_idx, 4)
             self._change_page(target_stack)
             for i, btn in enumerate(self.menu_buttons):
                 btn.setStyleSheet(self._menu_style(i == nav_idx))
         else:
-            target_stack = nav_idx
-            self._change_page(target_stack)
+            if nav_idx == 0:
+                self._change_page(0)
+            elif nav_idx == 1:
+                self._change_page(1)
+            elif nav_idx == 2:
+                self._trigger_check_session()
+            elif nav_idx == 3:
+                self._send_command('X')
+            
             for i, btn in enumerate(self.menu_buttons):
-                btn.setStyleSheet(self._menu_style(i == nav_idx))
+                btn.setStyleSheet(self._menu_style(i == nav_idx if nav_idx < 2 else False))
+
+    def _trigger_recalibration(self):
+        if self.is_check_session_active:
+            QMessageBox.warning(self, "Ditolak", "Kalibrasi ditolak! Sesi check (K) sedang berjalan.")
+            return
+        current_m = self.machines[self.selected_machine_idx] if self.selected_machine_idx >= 0 else None
+        if current_m and current_m.get("no_calib", False):
+            QMessageBox.information(self, "Mode Tanpa Kalibrasi", "Slot ini dikonfigurasi dalam Mode Tanpa Kalibrasi (Direct Monitoring). Kalibrasi R dilewati.")
+            return
+        self._send_command('R')
+        self._start_3min_calibration(self.selected_machine_idx)
+
+    def _trigger_check_session(self):
+        if self.calibration_timer.isActive() or self.delay_calibration_timer.isActive():
+            QMessageBox.warning(self, "Ditolak", "Sesi check ditolak! Perangkat masih dalam fase persiapan/kalibrasi (R).")
+            return
+        self._send_command('K')
+        self._start_60s_check_session()
+
+    def _start_60s_check_session(self):
+        self.is_check_session_active = True
+        self.check_session_time_left = 60
+        self.check_session_timer.start(1000)
+        self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_ACCENT}; border: none;")
+        self.lbl_check_text.setText("SESI CHECK 60 DETIK BERJALAN")
+        self.lbl_desc_text.setText("Mengumpulkan data analisis operasional...")
+
+    def _check_session_countdown_tick(self):
+        if self.check_session_time_left > 0:
+            self.check_session_time_left -= 1
+            self.lbl_desc_text.setText(f"Sisa waktu check session: {self.check_session_time_left} detik")
+        else:
+            self.check_session_timer.stop()
+            self.is_check_session_active = False
+            self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_OK}; border: none;")
+            self.lbl_check_text.setText("SESI CHECK SELESAI")
+            self.lbl_desc_text.setText("Hasil check session tersimpan. Tekan RINGKAS(P).")
 
     # =========================================================================
     # HALAMAN MODE AWAM
@@ -452,7 +592,7 @@ class Dashboard(QWidget):
 
         self.lbl_beranda_sub = QLabel("Mesin: - Pilih Slot -")
         self.lbl_beranda_sub.setAlignment(Qt.AlignCenter)
-        self.lbl_beranda_sub.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_TEXT_DIM};")
+        self.lbl_beranda_sub.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_TEXT_DIM};")
         lay.addWidget(self.lbl_beranda_sub)
 
         box_status = QFrame()
@@ -462,7 +602,7 @@ class Dashboard(QWidget):
         
         self.lbl_beranda_icon = QLabel("?")
         self.lbl_beranda_icon.setAlignment(Qt.AlignCenter)
-        self.lbl_beranda_icon.setStyleSheet("font-size: 26px; color: #a0aec0; border: none;")
+        self.lbl_beranda_icon.setStyleSheet("font-size: 28px; color: #a0aec0; border: none;")
         b_lay.addWidget(self.lbl_beranda_icon)
         lay.addWidget(box_status, 2)
 
@@ -473,7 +613,7 @@ class Dashboard(QWidget):
         
         self.lbl_check_text = QLabel("BELUM ADA HASIL CHECK")
         self.lbl_check_text.setAlignment(Qt.AlignCenter)
-        self.lbl_check_text.setStyleSheet("font-size: 9px; font-weight: bold; color: #e2e8f0; border: none;")
+        self.lbl_check_text.setStyleSheet("font-size: 10px; font-weight: bold; color: #e2e8f0; border: none;")
         c_lay.addWidget(self.lbl_check_text)
         lay.addWidget(self.box_check_status, 1)
 
@@ -482,100 +622,18 @@ class Dashboard(QWidget):
         d_lay = QVBoxLayout(box_desc)
         d_lay.setAlignment(Qt.AlignCenter)
         
-        self.lbl_desc_text = QLabel("Pilih slot mesin, lalu jalankan sesi Check untuk melihat hasilnya di sini.")
+        self.lbl_desc_text = QLabel("Pilih slot mesin, lalu jalankan CEK (K).")
         self.lbl_desc_text.setAlignment(Qt.AlignCenter)
         self.lbl_desc_text.setWordWrap(True)
-        self.lbl_desc_text.setStyleSheet(f"font-size: 7px; color: {COL_TEXT_DIM}; border: none;")
+        self.lbl_desc_text.setStyleSheet(f"font-size: 9px; color: {COL_TEXT_DIM}; border: none;")
         d_lay.addWidget(self.lbl_desc_text)
         lay.addWidget(box_desc, 1)
 
         self.lbl_estimasi_servis = QLabel("Estimasi servis berikutnya: --")
         self.lbl_estimasi_servis.setAlignment(Qt.AlignCenter)
-        self.lbl_estimasi_servis.setStyleSheet(f"font-size: 7px; font-weight: bold; color: {COL_TEXT_LIGHT}; background-color: {COL_PANEL_DARK}; padding: 4px; border-radius: 4px; border: 1px solid #2a3542;")
+        self.lbl_estimasi_servis.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_TEXT_LIGHT}; background-color: {COL_PANEL_DARK}; padding: 4px; border-radius: 4px; border: 1px solid #2a3542;")
         lay.addWidget(self.lbl_estimasi_servis)
 
-        return page
-
-    def _page_awam_riwayat(self):
-        page = QWidget()
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 2, 0, 2)
-        lay.setSpacing(6)
-
-        lbl_title = QLabel("Riwayat Sesi Pemantauan Ini")
-        lbl_title.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_TEXT_LIGHT};")
-        lay.addWidget(lbl_title)
-
-        grid_stat = QGridLayout()
-        grid_stat.setSpacing(4)
-
-        def _make_stat_box(title):
-            f = QFrame()
-            f.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border: 1px solid #2a3542; border-radius: 4px;")
-            flay = QVBoxLayout(f)
-            flay.setContentsMargins(2, 4, 2, 4)
-            flay.setAlignment(Qt.AlignCenter)
-            
-            t = QLabel(title)
-            t.setStyleSheet("font-size: 6px; color: #94a3b8; border: none;")
-            t.setAlignment(Qt.AlignCenter)
-            
-            v = QLabel("0")
-            v.setStyleSheet("font-size: 11px; font-weight: bold; color: #ffffff; border: none;")
-            v.setAlignment(Qt.AlignCenter)
-            
-            flay.addWidget(t)
-            flay.addWidget(v)
-            return f, v
-
-        box_w, self.lbl_stat_waspada = _make_stat_box("Kali Waspada")
-        box_b, self.lbl_stat_bahaya = _make_stat_box("Kali Bahaya")
-        box_t, self.lbl_stat_total = _make_stat_box("Total Data Masuk")
-
-        grid_stat.addWidget(box_w, 0, 0)
-        grid_stat.addWidget(box_b, 0, 1)
-        grid_stat.addWidget(box_t, 0, 2)
-        lay.addLayout(grid_stat)
-
-        lbl_kejadian = QLabel("Kejadian Terakhir:")
-        lbl_kejadian.setStyleSheet(f"font-size: 7px; color: {COL_TEXT_DIM};")
-        lay.addWidget(lbl_kejadian)
-
-        self.list_riwayat = QListWidget()
-        self.list_riwayat.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: #ffffff; border: 1px solid #2a3542; border-radius: 4px; font-size: 7px;")
-        self.list_riwayat.addItem("Belum ada kejadian pada sesi ini.")
-        lay.addWidget(self.list_riwayat, 1)
-
-        return page
-
-    def _page_awam_rekomendasi(self):
-        page = QWidget()
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 2, 0, 2)
-        lay.setSpacing(6)
-
-        lbl_title = QLabel("Rekomendasi Tindakan")
-        lbl_title.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_TEXT_LIGHT};")
-        lay.addWidget(lbl_title)
-
-        box_rec = QFrame()
-        box_rec.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border: 1px solid #2a3542; border-radius: 6px;")
-        r_lay = QVBoxLayout(box_rec)
-        r_lay.setContentsMargins(8, 8, 8, 8)
-        r_lay.setSpacing(4)
-
-        self.lbl_rec_penyebab = QLabel("Kemungkinan penyebab: belum ada hasil Check")
-        self.lbl_rec_penyebab.setStyleSheet(f"font-size: 7px; font-weight: bold; color: {COL_WARN}; border: none;")
-        self.lbl_rec_penyebab.setWordWrap(True)
-        r_lay.addWidget(self.lbl_rec_penyebab)
-
-        self.lbl_rec_tindakan = QLabel("Tindakan yang disarankan: pilih slot mesin lalu jalankan sesi Check.")
-        self.lbl_rec_tindakan.setStyleSheet(f"font-size: 7px; color: {COL_TEXT_LIGHT}; border: none;")
-        self.lbl_rec_tindakan.setWordWrap(True)
-        r_lay.addWidget(self.lbl_rec_tindakan)
-        r_lay.addStretch(1)
-
-        lay.addWidget(box_rec, 1)
         return page
 
     def _page_awam_mesin_saya(self):
@@ -584,9 +642,9 @@ class Dashboard(QWidget):
         lay.setContentsMargins(0, 2, 0, 2)
         lay.setSpacing(6)
 
-        lbl_title = QLabel("Pilih Slot Mesin (Preset Permanen vs Kalibrasi 3 Menit)")
+        lbl_title = QLabel("Pilih Slot Mesin (0-9)")
         lbl_title.setAlignment(Qt.AlignCenter)
-        lbl_title.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_TEXT_LIGHT};")
+        lbl_title.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_TEXT_LIGHT};")
         lay.addWidget(lbl_title)
 
         self.awam_machine_grid = QGridLayout()
@@ -614,16 +672,17 @@ class Dashboard(QWidget):
 
             lbl_ico = QLabel(m["icon"])
             lbl_ico.setAlignment(Qt.AlignCenter)
-            lbl_ico.setStyleSheet("font-size: 12px; background: transparent; border: none;")
+            lbl_ico.setStyleSheet("font-size: 14px; background: transparent; border: none;")
 
             lbl_nm = QLabel(m["name"])
             lbl_nm.setAlignment(Qt.AlignCenter)
-            lbl_nm.setStyleSheet(f"font-size: 6px; font-weight: bold; color: {COL_TEXT_LIGHT}; background: transparent; border: none;")
+            lbl_nm.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_TEXT_LIGHT}; background: transparent; border: none;")
 
-            inf_text = "Preset Permanen" if i < 2 else "Mesin Baru (Kalibrasi 3 Min)"
+            mode_str = "Tanpa Kalibrasi" if m.get("no_calib", False) else "Dengan Kalibrasi"
+            inf_text = f"Slot [{m['slot_char']}] — {mode_str}"
             lbl_inf = QLabel(inf_text)
             lbl_inf.setAlignment(Qt.AlignCenter)
-            lbl_inf.setStyleSheet(f"font-size: 5px; color: {COL_OK if i < 2 else COL_WARN}; background: transparent; border: none;")
+            lbl_inf.setStyleSheet(f"font-size: 6px; color: {COL_OK if i < 2 else COL_WARN}; background: transparent; border: none;")
 
             blay.addWidget(lbl_ico)
             blay.addWidget(lbl_nm)
@@ -638,33 +697,91 @@ class Dashboard(QWidget):
             self.awam_machine_grid.addWidget(btn, i // 2, i % 2)
 
     def _select_machine_slot(self, idx):
+        if self.selected_machine_idx == idx and (self.calibration_timer.isActive() or self.delay_calibration_timer.isActive()):
+            return
+
         self.selected_machine_idx = idx
         m = self.machines[idx]
-        self.lbl_machine_active.setText(f"{m['icon']}  {m['name']}")
+
+        self.lbl_machine_active.setText(f"⚙️ Slot [{m['slot_char']}]")
         self.lbl_beranda_sub.setText(f"Mesin: {m['name']}")
         
+        self._send_command(m["slot_char"])
+        time.sleep(0.02)
         self._send_command(m["bearing_cmd"])
+        time.sleep(0.02)
+        self._send_command(m["cluster_cmd"])
 
         if idx < 2:
             if self.calibration_timer.isActive():
                 self.calibration_timer.stop()
+            if self.delay_calibration_timer.isActive():
+                self.delay_calibration_timer.stop()
             self.calibrating_machine_idx = -1
-            self.lbl_check_text.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_OK}; border: none;")
-            self.lbl_check_text.setText("PRESET PERMANEN AKTIF")
-            self.lbl_desc_text.setText("Menggunakan parameter preset bawaan firmware tanpa kalibrasi.")
+            self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_OK}; border: none;")
+            self.lbl_check_text.setText(f"SLOT {m['slot_char']} SIAP")
+            self.lbl_desc_text.setText("Parameter preset aktif. Tekan CEK (K) untuk memulai analisis.")
         else:
-            self._start_3min_calibration(idx)
+            if m.get("no_calib", False):
+                if self.calibration_timer.isActive():
+                    self.calibration_timer.stop()
+                if self.delay_calibration_timer.isActive():
+                    self.delay_calibration_timer.stop()
+                self.calibrating_machine_idx = -1
+                self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_OK}; border: none;")
+                self.lbl_check_text.setText(f"SLOT {m['slot_char']} (TANPA KALIBRASI)")
+                self.lbl_desc_text.setText("Direct monitoring aktif. Siap memantau data sensor.")
+            else:
+                self._start_delayed_calibration(idx)
 
         if not self.is_technician_mode:
             self._change_page(0)
 
-    def _start_3min_calibration(self, idx):
+    def _start_delayed_calibration(self, idx):
+        if self.calibration_timer.isActive():
+            self.calibration_timer.stop()
+        if self.delay_calibration_timer.isActive():
+            self.delay_calibration_timer.stop()
+
+        self.pending_calibration_idx = idx
+        self.delay_seconds_left = 4  
+        
+        self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_WARN}; border: none;")
+        self.lbl_check_text.setText(f"PERSIAPAN KALIBRASI ({self.delay_seconds_left}s)")
+        self.lbl_desc_text.setText("Menunggu kestabilan perangkat keras di slot aktif...")
+
+        self.delay_countdown_timer = QTimer(self)
+        self.delay_countdown_timer.timeout.connect(self._delay_tick)
+        self.delay_countdown_timer.start(1000)
+
+        self.delay_calibration_timer.start(4000)
+
+    def _delay_tick(self):
+        self.delay_seconds_left -= 1
+        if self.delay_seconds_left > 0:
+            self.lbl_check_text.setText(f"PERSIAPAN KALIBRASI ({self.delay_seconds_left}s)")
+        else:
+            if hasattr(self, 'delay_countdown_timer'):
+                self.delay_countdown_timer.stop()
+
+    def _execute_actual_calibration(self):
+        if hasattr(self, 'delay_countdown_timer'):
+            self.delay_countdown_timer.stop()
+            
+        idx = self.pending_calibration_idx
+        if idx < 0:
+            return
+
         self.calibrating_machine_idx = idx
-        self.calibration_time_left = 180  # 180 detik = 3 menit
+        self.calibration_time_left = 180  
         self.calibration_timer.start(1000)
-        self._send_command('R')  # Kirim trigger kalibrasi ke ESP32
-        self.lbl_check_text.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_WARN}; border: none;")
-        self.lbl_check_text.setText("KALIBRASI 3 MENIT BERJALAN")
+        
+        self._send_command('R')
+        time.sleep(0.05)
+        self._send_command(self.machines[idx]["slot_char"])
+
+        self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_WARN}; border: none;")
+        self.lbl_check_text.setText("KALIBRASI 180s BERJALAN (R)")
         mins = self.calibration_time_left // 60
         secs = self.calibration_time_left % 60
         self.lbl_desc_text.setText(f"Kalibrasi mesin baru. Sisa waktu: {mins:02d}:{secs:02d}")
@@ -678,24 +795,24 @@ class Dashboard(QWidget):
         else:
             self.calibration_timer.stop()
             self.calibrating_machine_idx = -1
-            self.lbl_check_text.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_OK}; border: none;")
+            self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_OK}; border: none;")
             self.lbl_check_text.setText("KALIBRASI SELESAI")
-            self.lbl_desc_text.setText("Baseline Mahalanobis D² tersimpan. Mesin siap dipantau.")
+            self.lbl_desc_text.setText("Baseline D² tersimpan di slot aktif.")
 
     # =========================================================================
-    # HALAMAN MODE ENGINEER / TEKNISI (RAW, RECORDING, FFT, SUMMARY, DLL)
+    # HALAMAN MODE ENGINEER / TEKNISI
     # =========================================================================
     def _page_raw(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(1, 1, 1, 1)
-        layout.setSpacing(1)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
 
         main_raw = QHBoxLayout()
         main_raw.setSpacing(2)
         
         layout_grafik_grid = QGridLayout()
-        layout_grafik_grid.setSpacing(1)
+        layout_grafik_grid.setSpacing(2)
         layout_grafik_grid.setContentsMargins(0, 0, 0, 0)
         
         pg.setConfigOptions(antialias=True)
@@ -705,7 +822,7 @@ class Dashboard(QWidget):
             plot_item = plot_widget.getPlotItem()
             for axis_name in ("left", "bottom"):
                 axis = plot_item.getAxis(axis_name)
-                axis.setStyle(tickFont=axis_font, tickTextOffset=3, autoExpandTextSpace=True)
+                axis.setStyle(tickFont=axis_font, tickTextOffset=2, autoExpandTextSpace=True)
                 axis.setTextPen(pg.mkPen('#dddddd'))
             plot_item.getAxis("bottom").setTickSpacing(major=15, minor=15)
             plot_item.getAxis("left").setWidth(30)
@@ -715,43 +832,43 @@ class Dashboard(QWidget):
         self.graph_a = pg.PlotWidget(title="Sound (dB)")
         self.graph_a.setBackground(COL_PANEL_DARK)
         self.graph_a.showGrid(x=True, y=True, alpha=0.2)
-        self.curve_a = self.graph_a.plot(pen=pg.mkPen('#a78bfa', width=1.5))
+        self.curve_a = self.graph_a.plot(pen=pg.mkPen('#a78bfa', width=1.2))
         _tidy_plot(self.graph_a, "Sound (dB)")
         layout_grafik_grid.addWidget(self.graph_a, 0, 0)
         
         self.graph_temp = pg.PlotWidget(title="Temp (°C)")
         self.graph_temp.setBackground(COL_PANEL_DARK)
         self.graph_temp.showGrid(x=True, y=True, alpha=0.2)
-        self.curve_temp = self.graph_temp.plot(pen=pg.mkPen('#f472b6', width=1.5))
+        self.curve_temp = self.graph_temp.plot(pen=pg.mkPen('#f472b6', width=1.2))
         _tidy_plot(self.graph_temp, "Temp (°C)")
         layout_grafik_grid.addWidget(self.graph_temp, 0, 1)
 
         self.graph_v = pg.PlotWidget(title="Vibration (G)")
         self.graph_v.setBackground(COL_PANEL_DARK)
         self.graph_v.showGrid(x=True, y=True, alpha=0.2)
-        self.curve_v = self.graph_v.plot(pen=pg.mkPen('#818cf8', width=1.5))
+        self.curve_v = self.graph_v.plot(pen=pg.mkPen('#818cf8', width=1.2))
         _tidy_plot(self.graph_v, "Vibration (G)")
         layout_grafik_grid.addWidget(self.graph_v, 1, 0)
         
         self.panel_ai = QFrame()
-        self.panel_ai.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border-radius: 3px;")
+        self.panel_ai.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border-radius: 3px; border: 1px solid #2a3542;")
         lay_ai = QVBoxLayout(self.panel_ai)
-        lay_ai.setContentsMargins(3, 1, 3, 1)
+        lay_ai.setContentsMargins(4, 2, 4, 2)
         lay_ai.setSpacing(1)
 
-        lbl_ai_title = QLabel("🤖 ADVANCED DIAGNOSTICS & AI")
+        lbl_ai_title = QLabel("🤖 AI DIAGNOSTICS & GROUND TRUTH")
         lbl_ai_title.setStyleSheet(f"font-size: 7px; font-weight: bold; color: {COL_ACCENT};")
         lay_ai.addWidget(lbl_ai_title)
 
         grid_ai = QGridLayout()
-        grid_ai.setHorizontalSpacing(3)
+        grid_ai.setHorizontalSpacing(2)
         grid_ai.setVerticalSpacing(0)
 
         def _ai_row(r, label_text):
             lbl1 = QLabel(label_text)
-            lbl1.setStyleSheet("font-size: 6px; color: #999;")
+            lbl1.setStyleSheet("font-size: 7px; color: #999;")
             lbl2 = QLabel("--")
-            lbl2.setStyleSheet("font-size: 7px; font-weight: bold; color: #eee;")
+            lbl2.setStyleSheet("font-size: 8px; font-weight: bold; color: #eee;")
             lbl2.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             grid_ai.addWidget(lbl1, r, 0)
             grid_ai.addWidget(lbl2, r, 1)
@@ -772,8 +889,16 @@ class Dashboard(QWidget):
         )
         grid_ai.addWidget(self.prog_hs, 5, 0, 1, 2)
 
+        gt_layout = QHBoxLayout()
+        gt_layout.setSpacing(1)
+        for gt_char, gt_label in [('O', 'NORM'), ('U', 'UNB'), ('M', 'MIS'), ('F', 'BRG'), ('L', 'LUB'), ('D', 'MATI')]:
+            b = QPushButton(gt_label)
+            b.setStyleSheet("font-size: 6px; background-color: #1c2027; color: #bbb; border: 1px solid #444; border-radius: 2px;")
+            b.clicked.connect(lambda checked, ch=gt_char: self._send_command(ch))
+            gt_layout.addWidget(b)
+        grid_ai.addLayout(gt_layout, 6, 0, 1, 2)
+
         lay_ai.addLayout(grid_ai)
-        lay_ai.addStretch(1)
         layout_grafik_grid.addWidget(self.panel_ai, 1, 1)
 
         layout_grafik_grid.setColumnStretch(0, 1)
@@ -781,19 +906,19 @@ class Dashboard(QWidget):
         layout_grafik_grid.setRowStretch(0, 1)
         layout_grafik_grid.setRowStretch(1, 1)
         
-        main_raw.addLayout(layout_grafik_grid, 5)
+        main_raw.addLayout(layout_grafik_grid, 6)
 
         panel_kanan = QVBoxLayout()
         panel_kanan.setSpacing(1)
 
         frame_status = QFrame()
-        frame_status.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border-radius: 3px;")
+        frame_status.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border-radius: 3px; border: 1px solid #2a3542;")
         fs_lay = QVBoxLayout(frame_status)
-        fs_lay.setContentsMargins(3, 2, 3, 2)
+        fs_lay.setContentsMargins(4, 2, 4, 2)
         fs_lay.setSpacing(1)
 
         self.lbl_sys_status = QLabel("● STANDBY")
-        self.lbl_sys_status.setStyleSheet("font-size: 7px; font-weight: bold; color: #888888; padding-bottom: 1px;")
+        self.lbl_sys_status.setStyleSheet("font-size: 8px; font-weight: bold; color: #888888; padding-bottom: 2px;")
         fs_lay.addWidget(self.lbl_sys_status)
 
         row_style = "border-bottom: 1px solid #33363b;"
@@ -802,7 +927,7 @@ class Dashboard(QWidget):
 
         grid_val = QGridLayout()
         grid_val.setContentsMargins(0, 0, 0, 0)
-        grid_val.setHorizontalSpacing(3)
+        grid_val.setHorizontalSpacing(2)
         grid_val.setVerticalSpacing(1)
         grid_val.setColumnStretch(0, 1)
         grid_val.setColumnStretch(1, 1)
@@ -826,12 +951,12 @@ class Dashboard(QWidget):
         fs_lay.addLayout(grid_val)
 
         self.lbl_val_vxyz = QLabel("(X: -- | Y: -- | Z: -- G)")
-        self.lbl_val_vxyz.setStyleSheet("font-size: 6px; color: #777777; padding: 1px 0px 0px 0px;")
+        self.lbl_val_vxyz.setStyleSheet("font-size: 7px; color: #777777; padding: 2px 0px 0px 0px;")
         self.lbl_val_vxyz.setWordWrap(True)
         fs_lay.addWidget(self.lbl_val_vxyz)
 
         panel_kanan.addWidget(frame_status)
-        main_raw.addLayout(panel_kanan, 4)
+        main_raw.addLayout(panel_kanan, 3)
 
         layout.addLayout(main_raw)
         return page
@@ -844,22 +969,22 @@ class Dashboard(QWidget):
 
         rec_ctrl = QHBoxLayout()
         self.btn_toggle_rec = QPushButton("MULAI RECORDING")
-        self.btn_toggle_rec.setStyleSheet("background-color: #cfcfcf; color: #000000; font-weight: bold; font-size: 7px; height: 20px; border-radius: 3px;")
+        self.btn_toggle_rec.setStyleSheet("background-color: #cfcfcf; color: #000000; font-weight: bold; font-size: 9px; height: 24px; border-radius: 3px;")
         self.btn_toggle_rec.clicked.connect(self._toggle_recording)
         
         self.lbl_rec_status = QLabel("● Device Standby")
-        self.lbl_rec_status.setStyleSheet("font-size: 6px; color: #aaa;")
+        self.lbl_rec_status.setStyleSheet("font-size: 8px; color: #aaa;")
         
         rec_ctrl.addWidget(self.btn_toggle_rec, 2)
         rec_ctrl.addWidget(self.lbl_rec_status, 1)
         layout.addLayout(rec_ctrl)
 
         lbl_daftar = QLabel("Daftar Rekaman Mesin (.CSV):")
-        lbl_daftar.setStyleSheet("font-size: 6px;")
+        lbl_daftar.setStyleSheet("font-size: 8px;")
         layout.addWidget(lbl_daftar)
         
         self.log_list = QListWidget()
-        self.log_list.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: white; font-size: 7px;")
+        self.log_list.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: white; font-size: 9px;")
         self.log_list.itemDoubleClicked.connect(self._open_log_detail)
         layout.addWidget(self.log_list)
 
@@ -868,9 +993,9 @@ class Dashboard(QWidget):
         self.btn_export_excel = QPushButton("Export ke Excel")
         self.btn_delete_log = QPushButton("Hapus Rekaman")
 
-        self.btn_watch_log.setStyleSheet("background-color: #cfcfcf; color: #000000; font-size: 7px; height: 18px; font-weight: bold; border-radius: 2px;")
-        self.btn_export_excel.setStyleSheet("background-color: #217346; color: #ffffff; font-size: 7px; height: 18px; font-weight: bold; border-radius: 2px;")
-        self.btn_delete_log.setStyleSheet("background-color: #cfcfcf; color: #000000; font-size: 7px; height: 18px; font-weight: bold; border-radius: 2px;")
+        self.btn_watch_log.setStyleSheet("background-color: #cfcfcf; color: #000000; font-size: 9px; height: 22px; font-weight: bold; border-radius: 2px;")
+        self.btn_export_excel.setStyleSheet("background-color: #217346; color: #ffffff; font-size: 9px; height: 22px; font-weight: bold; border-radius: 2px;")
+        self.btn_delete_log.setStyleSheet("background-color: #cfcfcf; color: #000000; font-size: 9px; height: 22px; font-weight: bold; border-radius: 2px;")
 
         self.btn_watch_log.clicked.connect(self._open_log_detail_from_button)
         self.btn_export_excel.clicked.connect(self._export_selected_log_to_excel)
@@ -882,7 +1007,7 @@ class Dashboard(QWidget):
         layout.addLayout(btn_lay)
 
         lbl_hint = QLabel("* Klik file rekaman untuk membuka panel forensik anomali.")
-        lbl_hint.setStyleSheet("font-size: 6px; color: #888; font-style: italic;")
+        lbl_hint.setStyleSheet("font-size: 8px; color: #888; font-style: italic;")
         layout.addWidget(lbl_hint)
 
         return page
@@ -894,7 +1019,7 @@ class Dashboard(QWidget):
         layout.setSpacing(2)
 
         self.lbl_proc_snapshot = QLabel("Menunggu data... | RPM: -- | D²: --")
-        self.lbl_proc_snapshot.setStyleSheet("font-size: 6px; color: #999;")
+        self.lbl_proc_snapshot.setStyleSheet("font-size: 8px; color: #999;")
         layout.addWidget(self.lbl_proc_snapshot)
 
         grid = QGridLayout()
@@ -927,11 +1052,11 @@ class Dashboard(QWidget):
         layout.addLayout(grid, 3)
 
         lbl_anomali_title = QLabel("Log Kejadian Anomali:")
-        lbl_anomali_title.setStyleSheet("font-size: 6px; font-weight: bold; color: #ccc;")
+        lbl_anomali_title.setStyleSheet("font-size: 8px; font-weight: bold; color: #ccc;")
         layout.addWidget(lbl_anomali_title)
 
         self.list_anomali = QListWidget()
-        self.list_anomali.setStyleSheet("background-color: #ffffff; color: #222222; font-size: 7px;")
+        self.list_anomali.setStyleSheet("background-color: #ffffff; color: #222222; font-size: 9px;")
         self.list_anomali.addItem("Tidak ada kejadian anomali sepanjang sesi ini.")
         layout.addWidget(self.list_anomali, 2)
 
@@ -939,7 +1064,7 @@ class Dashboard(QWidget):
             "Sesi: 0 sample | RPM rata-rata: 0.0 | D² max: 0.00 | Kondisi terparah: Normal | Waspada: 0x, Bahaya: 0x."
         )
         self.lbl_session_summary.setStyleSheet(
-            "font-size: 7px; color: #1c3d1c; background-color: #d7f0d7; padding: 2px; border-radius: 2px;"
+            "font-size: 9px; color: #1c3d1c; background-color: #d7f0d7; padding: 3px; border-radius: 2px;"
         )
         self.lbl_session_summary.setWordWrap(True)
         layout.addWidget(self.lbl_session_summary)
@@ -953,7 +1078,7 @@ class Dashboard(QWidget):
         layout.setSpacing(4)
 
         self.lbl_sum_machine = QLabel("Target: Belum dipilih")
-        self.lbl_sum_machine.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_TEXT_LIGHT};")
+        self.lbl_sum_machine.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {COL_TEXT_LIGHT};")
         layout.addWidget(self.lbl_sum_machine)
 
         grid = QGridLayout()
@@ -980,13 +1105,16 @@ class Dashboard(QWidget):
         layout.addStretch(1)
 
         self.lbl_diag_desc_summary = QLabel("Menunggu data deteksi...")
-        self.lbl_diag_desc_summary.setStyleSheet(f"font-size: 8px; color: {COL_TEXT_DIM}; border-top: 1px solid #333; padding-top: 2px;")
+        self.lbl_diag_desc_summary.setStyleSheet(f"font-size: 9px; color: {COL_TEXT_DIM}; border-top: 1px solid #333; padding-top: 3px;")
         self.lbl_diag_desc_summary.setWordWrap(True)
         self.lbl_diag_desc_summary.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.lbl_diag_desc_summary)
 
         return page
 
+    # =========================================================================
+    # HALAMAN MANAJEMEN SLOT MESIN
+    # =========================================================================
     def _page_machine_select(self):
         page = QWidget()
         self.machine_page_layout = QVBoxLayout(page)
@@ -994,16 +1122,22 @@ class Dashboard(QWidget):
         self.machine_page_layout.setSpacing(2)
 
         top_row = QHBoxLayout()
-        lbl_title = QLabel("Pilih Mesin Target & Klaster Firmware (Preset vs Kalibrasi)")
-        lbl_title.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_TEXT_LIGHT};")
+        lbl_title = QLabel("Manajemen Slot Mesin (0-9)")
+        lbl_title.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_TEXT_LIGHT};")
         top_row.addWidget(lbl_title)
         top_row.addStretch(1)
+
+        self.btn_add_machine_modal = QPushButton("➕ TAMBAH SLOT")
+        self.btn_add_machine_modal.setStyleSheet(f"background-color: {COL_ACCENT}; color: #101216; font-weight: bold; font-size: 8px; padding: 3px; border-radius: 2px;")
+        self.btn_add_machine_modal.clicked.connect(self._open_add_machine_dialog)
+        top_row.addWidget(self.btn_add_machine_modal)
 
         self.btn_machine_delete_mode = QPushButton("🗑 HAPUS")
         self.btn_machine_delete_mode.setCheckable(True)
         self.btn_machine_delete_mode.setStyleSheet(self._delete_mode_btn_style(False))
         self.btn_machine_delete_mode.clicked.connect(self._toggle_machine_delete_mode)
         top_row.addWidget(self.btn_machine_delete_mode)
+        
         self.machine_page_layout.addLayout(top_row)
 
         self.machine_grid = QGridLayout()
@@ -1019,8 +1153,8 @@ class Dashboard(QWidget):
 
     def _delete_mode_btn_style(self, active):
         if active:
-            return f"background-color: {COL_BAD}; color: #101216; font-weight: bold; font-size: 7px; padding: 2px; border-radius: 2px;"
-        return f"background-color: transparent; color: {COL_BAD}; font-weight: bold; font-size: 7px; padding: 2px; border: 1px solid {COL_BAD}; border-radius: 2px;"
+            return f"background-color: {COL_BAD}; color: #101216; font-weight: bold; font-size: 8px; padding: 3px; border-radius: 2px;"
+        return f"background-color: transparent; color: {COL_BAD}; font-weight: bold; font-size: 8px; padding: 3px; border: 1px solid {COL_BAD}; border-radius: 2px;"
 
     def _toggle_machine_delete_mode(self):
         self.machine_delete_mode = self.btn_machine_delete_mode.isChecked()
@@ -1033,34 +1167,27 @@ class Dashboard(QWidget):
         lay.setContentsMargins(1, 1, 1, 1)
         lay.setSpacing(0)
 
-        if idx is None:
-            lbl_icon = QLabel("➕")
-            lbl_name = QLabel("Tambah Mesin Baru")
-            btn.clicked.connect(self._activate_inline_add_machine)
-            border_col = COL_TEXT_DIM
-            bg = "transparent"
-            lbl_cluster = QLabel("")
-        else:
-            m = self.machines[idx]
-            lbl_icon = QLabel(m["icon"])
-            lbl_name = QLabel(m["name"])
-            cluster_text = "Preset Permanen" if idx < 2 else "Kalibrasi 3 Menit"
-            lbl_cluster = QLabel(f"⚡ {cluster_text}")
-            btn.clicked.connect(lambda checked, i=idx: self._on_machine_card_clicked(i))
-            selected = (idx == self.selected_machine_idx)
-            border_col = COL_ACCENT if selected else "#2a3542"
-            bg = COL_ACCENT_DIM if selected else COL_PANEL_DARK
+        m = self.machines[idx]
+        lbl_icon = QLabel(m["icon"])
+        lbl_name = QLabel(m["name"])
+        mode_str = "Tanpa Kalibrasi" if m.get("no_calib", False) else f"Slot [{m['slot_char']}]"
+        lbl_cluster = QLabel(f"⚡ {mode_str}")
+        
+        btn.clicked.connect(lambda checked, i=idx: self._on_machine_card_clicked(i))
+        selected = (idx == self.selected_machine_idx)
+        border_col = COL_ACCENT if selected else "#2a3542"
+        bg = COL_ACCENT_DIM if selected else COL_PANEL_DARK
 
         lbl_icon.setAlignment(Qt.AlignCenter)
         lbl_icon.setStyleSheet("font-size: 14px; background: transparent; border: none;")
         
         lbl_name.setAlignment(Qt.AlignCenter)
         lbl_name.setWordWrap(True)
-        lbl_name.setStyleSheet(f"font-size: 6px; font-weight: bold; color: {COL_TEXT_LIGHT}; background: transparent; border: none;")
+        lbl_name.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_TEXT_LIGHT}; background: transparent; border: none;")
 
         lbl_cluster.setAlignment(Qt.AlignCenter)
-        cluster_color = COL_OK if (idx is not None and idx < 2) else COL_ACCENT
-        lbl_cluster.setStyleSheet(f"font-size: 5px; color: {cluster_color}; background: transparent; border: none;")
+        cluster_color = COL_OK if idx < 2 else COL_ACCENT
+        lbl_cluster.setStyleSheet(f"font-size: 7px; color: {cluster_color}; background: transparent; border: none;")
 
         lay.addWidget(lbl_icon)
         lay.addWidget(lbl_name)
@@ -1079,93 +1206,29 @@ class Dashboard(QWidget):
             if w:
                 w.deleteLater()
 
-        total_slots = 6
-        for i in range(min(len(self.machines), total_slots)):
+        for i in range(len(self.machines)):
             self.machine_grid.addWidget(self._make_machine_card(i), i // 3, i % 3)
 
-        if len(self.machines) < total_slots:
-            add_pos = len(self.machines)
-            self.machine_grid.addWidget(self._make_machine_card(None), add_pos // 3, add_pos % 3)
-
-    def _activate_inline_add_machine(self):
-        while self.machine_grid.count():
-            item = self.machine_grid.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-
-        form_frame = QFrame()
-        form_frame.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border: 1px solid {COL_ACCENT}; border-radius: 3px;")
-        f_lay = QVBoxLayout(form_frame)
-        f_lay.setContentsMargins(3, 3, 3, 3)
-        f_lay.setSpacing(1)
-
-        lbl_nm = QLabel("Nama Mesin Baru (Auto 3 Min Cal):")
-        lbl_nm.setStyleSheet(f"color: {COL_TEXT_LIGHT}; font-size: 6px; background: transparent;")
-        f_lay.addWidget(lbl_nm)
-
-        self.inline_name_input = QLineEdit()
-        self.inline_name_input.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; border: 1px solid {COL_TEXT_DIM}; padding: 1px; font-size: 6px;")
-        f_lay.addWidget(self.inline_name_input)
-
-        h_sub = QHBoxLayout()
-        self.inline_icon_combo = QComboBox()
-        self.inline_icon_combo.addItems(["⚙️", "🌀", "💧", "🗜️", "🥤", "🔥", "❄️", "🏭"])
-        self.inline_icon_combo.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; font-size: 6px;")
-        h_sub.addWidget(self.inline_icon_combo)
-
-        self.inline_fw_cluster_combo = QComboBox()
-        self.inline_fw_cluster_combo.addItems(["Klaster A (Low RPM)", "Klaster B (Medium/High RPM)"])
-        self.inline_fw_cluster_combo.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; font-size: 6px;")
-        h_sub.addWidget(self.inline_fw_cluster_combo)
-        f_lay.addLayout(h_sub)
-
-        btn_row = QHBoxLayout()
-        btn_ok = QPushButton("Simpan & Kalibrasi")
-        btn_cancel = QPushButton("Batal")
-        btn_ok.setStyleSheet(f"background-color: {COL_ACCENT}; color: #000; font-weight: bold; font-size: 6px; padding: 2px;")
-        btn_cancel.setStyleSheet(f"background-color: #444; color: #fff; font-size: 6px; padding: 2px;")
-        
-        btn_ok.clicked.connect(self._save_inline_machine)
-        btn_cancel.clicked.connect(self._rebuild_machine_grid)
-        
-        btn_row.addWidget(btn_ok)
-        btn_row.addWidget(btn_cancel)
-        f_lay.addLayout(btn_row)
-
-        self.machine_grid.addWidget(form_frame, 0, 0, 2, 3)
-
-    def _save_inline_machine(self):
-        name = self.inline_name_input.text().strip()
-        if not name:
-            return
-        icon = self.inline_icon_combo.currentText()
-        fw_cluster_idx = self.inline_fw_cluster_combo.currentIndex()
-        bearing_cmd = "A" if fw_cluster_idx == 0 else "B"
-        fw_cluster_name = "Klaster A" if fw_cluster_idx == 0 else "Klaster B"
-        rpm_cluster_desc = "Low (< 1000 RPM)" if fw_cluster_idx == 0 else "Medium/High (> 1500 RPM)"
-
-        self.machines.append({
-            "name": name, 
-            "icon": icon, 
-            "bearing_cmd": bearing_cmd, 
-            "rpm_cluster": rpm_cluster_desc,
-            "baseline_d2": 9.49,
-            "fw_cluster": fw_cluster_name
-        })
-        self._rebuild_machine_grid()
-        if hasattr(self, 'awam_machine_grid'):
-            self._rebuild_awam_machine_grid()
+    def _open_add_machine_dialog(self):
+        dlg = AddMachineDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            new_data = dlg.get_data()
+            new_idx = len(self.machines)
+            self.machines.append(new_data)
+            self._rebuild_machine_grid()
+            if hasattr(self, 'awam_machine_grid'):
+                self._rebuild_awam_machine_grid()
+            self._select_machine_slot(new_idx)
 
     def _on_machine_card_clicked(self, idx):
         if self.machine_delete_mode:
             if idx < 2:
-                QMessageBox.warning(self, "Peringatan", "Mesin preset utama (0 & 1) tidak dapat dihapus!")
+                QMessageBox.warning(self, "Peringatan", "Slot utama (0 & 1) tidak dapat dihapus!")
                 return
             self.machines.pop(idx)
             if self.selected_machine_idx == idx:
                 self.selected_machine_idx = -1
-                self.lbl_machine_active.setText("⚙️  - Pilih Mesin -")
+                self.lbl_machine_active.setText("⚙️ - Pilih Slot -")
             elif self.selected_machine_idx > idx:
                 self.selected_machine_idx -= 1
             self._rebuild_machine_grid()
@@ -1173,18 +1236,7 @@ class Dashboard(QWidget):
                 self._rebuild_awam_machine_grid()
             return
 
-        self.selected_machine_idx = idx
-        m = self.machines[idx]
-        self.lbl_machine_active.setText(f"{m['icon']}  {m['name']} ({m.get('fw_cluster', 'Klaster B')})")
-        self._send_command(m["bearing_cmd"])
-        
-        if idx >= 2:
-            self._start_3min_calibration(idx)
-        else:
-            if self.calibration_timer.isActive():
-                self.calibration_timer.stop()
-            self.calibrating_machine_idx = -1
-
+        self._select_machine_slot(idx)
         self._rebuild_machine_grid()
 
     def _page_log_detail(self):
@@ -1194,7 +1246,7 @@ class Dashboard(QWidget):
         root.setSpacing(2)
 
         self.lbl_logdet_title = QLabel("HASIL DETEKSI REKAMAN: -")
-        self.lbl_logdet_title.setStyleSheet("font-size: 8px; font-weight: bold; color: #ffffff;")
+        self.lbl_logdet_title.setStyleSheet("font-size: 9px; font-weight: bold; color: #ffffff;")
         self.lbl_logdet_title.setWordWrap(True)
         root.addWidget(self.lbl_logdet_title)
 
@@ -1202,12 +1254,12 @@ class Dashboard(QWidget):
         status_row.setSpacing(2)
 
         self.lbl_logdet_dot = QLabel("●")
-        self.lbl_logdet_dot.setStyleSheet("font-size: 11px; color: #888888;")
+        self.lbl_logdet_dot.setStyleSheet("font-size: 12px; color: #888888;")
         status_row.addWidget(self.lbl_logdet_dot)
 
         self.lbl_logdet_peak = QLabel("Nilai puncak: -")
         self.lbl_logdet_peak.setWordWrap(True)
-        self.lbl_logdet_peak.setStyleSheet("font-size: 7px; color: #cccccc;")
+        self.lbl_logdet_peak.setStyleSheet("font-size: 8px; color: #cccccc;")
         status_row.addWidget(self.lbl_logdet_peak, 1)
 
         root.addLayout(status_row)
@@ -1252,9 +1304,9 @@ class Dashboard(QWidget):
         self.speed_logdet_combo.setCurrentIndex(1)
         self.btn_logdet_back = QPushButton("◄ KEMBALI")
 
-        self.btn_logdet_play_pause.setStyleSheet("background-color: #cfcfcf; color: #000000; font-weight: bold; font-size: 7px; height: 20px; border-radius: 3px;")
-        self.btn_logdet_back.setStyleSheet(f"background-color: {COL_BAD}; color: #ffffff; font-weight: bold; font-size: 7px; height: 20px; border-radius: 3px;")
-        self.speed_logdet_combo.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: white; font-size: 7px;")
+        self.btn_logdet_play_pause.setStyleSheet("background-color: #cfcfcf; color: #000000; font-weight: bold; font-size: 9px; height: 24px; border-radius: 3px;")
+        self.btn_logdet_back.setStyleSheet(f"background-color: {COL_BAD}; color: #ffffff; font-weight: bold; font-size: 9px; height: 24px; border-radius: 3px;")
+        self.speed_logdet_combo.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: white; font-size: 9px;")
 
         self.btn_logdet_play_pause.clicked.connect(self._logdet_toggle_play)
         self.speed_logdet_combo.currentIndexChanged.connect(self._logdet_change_speed)
@@ -1266,7 +1318,7 @@ class Dashboard(QWidget):
         self.slider_logdet.sliderMoved.connect(self._logdet_seek)
 
         self.lbl_logdet_pos = QLabel("0 / 0")
-        self.lbl_logdet_pos.setStyleSheet("font-size: 6px; color: #aaa;")
+        self.lbl_logdet_pos.setStyleSheet("font-size: 8px; color: #aaa;")
 
         ctrl.addWidget(self.btn_logdet_play_pause, 2)
         ctrl.addWidget(self.speed_logdet_combo, 1)
@@ -1279,7 +1331,7 @@ class Dashboard(QWidget):
 
     def _logdet_back(self):
         self.logdet_timer.stop()
-        self._change_page(7)
+        self._change_page(5)
 
     def _logdet_load_csv(self, filepath):
         times, v_vals, a_vals, t_vals = [], [], [], []
@@ -1303,7 +1355,7 @@ class Dashboard(QWidget):
 
     def _logdet_render_diagnosis_summary(self):
         if not self.logdet_v_vals:
-            self.lbl_logdet_dot.setStyleSheet("font-size: 11px; color: #888888;")
+            self.lbl_logdet_dot.setStyleSheet("font-size: 12px; color: #888888;")
             self.lbl_logdet_peak.setText("Data kosong.")
             return
 
@@ -1318,7 +1370,7 @@ class Dashboard(QWidget):
         else:
             status, col = "NORMAL", COL_OK
 
-        self.lbl_logdet_dot.setStyleSheet(f"font-size: 11px; color: {col};")
+        self.lbl_logdet_dot.setStyleSheet(f"font-size: 12px; color: {col};")
         self.lbl_logdet_peak.setText(
             f"{status} — Puncak: Vib {peak_v:.2f} G | Snd {peak_a:.1f} dB | Tmp {peak_temp:.1f} °C"
         )
@@ -1526,7 +1578,7 @@ class Dashboard(QWidget):
             "waspada": ("● STATUS WASPADA", COL_WARN),
             "normal": ("● SYSTEM ONLINE", COL_OK),
             "warming": ("● WARMING UP", "#888888"),
-            "notcalibrated": ("● KALIBRASI BASELINE", "#888888"),
+            "notcalibrated": ("● TANPA KALIBRASI / DIRECT", COL_OK),
             "sensorfault": ("● SENSOR FAULT", COL_WARN),
         }
         
@@ -1534,24 +1586,26 @@ class Dashboard(QWidget):
         if self.packet_loss_flag:
             txt, col = "● PACKET LOSS WARNING", COL_WARN
         self.lbl_sys_status.setText(txt)
-        self.lbl_sys_status.setStyleSheet(f"font-size: 7px; font-weight: bold; color: {col};")
+        self.lbl_sys_status.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {col};")
 
     def _show_debug_info(self):
         port_info = self.ser.port if (self.ser is not None) else "(belum ada koneksi)"
         selected_machine_name = self.machines[self.selected_machine_idx]["name"] if self.selected_machine_idx >= 0 else "Belum dipilih"
-        active_baseline = self.machines[self.selected_machine_idx].get("baseline_d2", 9.49) if self.selected_machine_idx >= 0 else "N/A"
+        active_slot = self.machines[self.selected_machine_idx].get("slot_char", "-") if self.selected_machine_idx >= 0 else "N/A"
+        is_no_calib = self.machines[self.selected_machine_idx].get("no_calib", False) if self.selected_machine_idx >= 0 else False
         info = (
             f"Status koneksi   : {'TERSAMBUNG' if self.serial_connected else 'TIDAK TERSAMBUNG'}\n"
             f"Port serial      : {port_info}\n"
             f"Baud rate        : {BAUD_RATE}\n"
             f"Packet Loss Flag : {'TERDETEKSI' if self.packet_loss_flag else 'Aman'}\n"
-            f"Mesin Aktif      : {selected_machine_name} (Baseline D²: {active_baseline})\n"
+            f"Mesin/Slot Aktif : {selected_machine_name} (Slot: {active_slot})\n"
+            f"Mode Kalibrasi   : {'TANPA KALIBRASI (Direct)' if is_no_calib else 'Dengan Kalibrasi Baseline'}\n"
             f"Baris JSON akhir : {self.last_raw_line or '(belum ada data)'}\n"
             f"Vib/Snd/Tmp      : {self.current_v}, {self.current_a}, {self.current_temp}\n"
             f"RPM / D²         : {self.current_rpm}, {self.current_d2}\n"
             f"Status firmware  : {self.current_status_device or '-'}"
         )
-        QMessageBox.information(self, "DEBUG - Info Koneksi & Data Terakhir", info)
+        QMessageBox.information(self, "DEBUG - Info Koneksi & Protokol", info)
 
     def _render_session_summary(self):
         self.lbl_session_summary.setText(
@@ -1566,7 +1620,7 @@ class Dashboard(QWidget):
         self.date_lbl.setText(now_dt.strftime("%d/%m/%Y"))
 
         self.lbl_conn_dot.setStyleSheet(
-            f"font-size: 9px; font-weight: bold; color: {COL_OK if (self.serial_connected and not self.packet_loss_flag) else COL_WARN};"
+            f"font-size: 10px; font-weight: bold; color: {COL_OK if (self.serial_connected and not self.packet_loss_flag) else COL_WARN};"
         )
 
         if self.current_v is not None:
@@ -1574,25 +1628,25 @@ class Dashboard(QWidget):
             status_key = (self.current_status_device or "").strip().lower()
 
             if not self.is_technician_mode and self.selected_machine_idx >= 0:
-                if self.calibration_timer.isActive():
+                if self.calibration_timer.isActive() or self.delay_calibration_timer.isActive() or self.check_session_timer.isActive():
                     pass
                 elif status_key == "bahaya":
                     self.lbl_beranda_icon.setText("⚠️")
-                    self.lbl_beranda_icon.setStyleSheet(f"font-size: 26px; color: {COL_BAD}; border: none;")
+                    self.lbl_beranda_icon.setStyleSheet(f"font-size: 28px; color: {COL_BAD}; border: none;")
                     self.lbl_check_text.setText("BAHAYA / RISIKO KERUSAKAN")
-                    self.lbl_check_text.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_BAD}; border: none;")
+                    self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_BAD}; border: none;")
                 elif status_key == "waspada":
                     self.lbl_beranda_icon.setText("⚡")
-                    self.lbl_beranda_icon.setStyleSheet(f"font-size: 26px; color: {COL_WARN}; border: none;")
+                    self.lbl_beranda_icon.setStyleSheet(f"font-size: 28px; color: {COL_WARN}; border: none;")
                     self.lbl_check_text.setText("WASPADA DEVIASI OPERASIONAL")
-                    self.lbl_check_text.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_WARN}; border: none;")
+                    self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_WARN}; border: none;")
                 else:
                     self.lbl_beranda_icon.setText("✓")
-                    self.lbl_beranda_icon.setStyleSheet(f"font-size: 26px; color: {COL_OK}; border: none;")
+                    self.lbl_beranda_icon.setStyleSheet(f"font-size: 28px; color: {COL_OK}; border: none;")
                     self.lbl_check_text.setText("MESIN AMAN / NORMAL")
-                    self.lbl_check_text.setStyleSheet(f"font-size: 9px; font-weight: bold; color: {COL_OK}; border: none;")
+                    self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_OK}; border: none;")
 
-                if not self.calibration_timer.isActive():
+                if not self.calibration_timer.isActive() and not self.delay_calibration_timer.isActive() and not self.check_session_timer.isActive():
                     self.lbl_desc_text.setText(f"Vib: {self.current_v:.2f}G | Snd: {self.current_a:.1f}dB | Temp: {self.current_temp:.1f}°C")
                 self.lbl_estimasi_servis.setText(f"Estimasi servis berikutnya: {self.current_servis}")
 
@@ -1676,10 +1730,10 @@ class Dashboard(QWidget):
                 self._render_session_summary()
         elif not self.serial_connected:
             self.lbl_sys_status.setText("● MENCARI PERANGKAT (COM3)...")
-            self.lbl_sys_status.setStyleSheet(f"font-size: 7px; font-weight: bold; color: {COL_WARN};")
+            self.lbl_sys_status.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_WARN};")
         else:
             self.lbl_sys_status.setText("● TERSAMBUNG — MENUNGGU DATA JSON...")
-            self.lbl_sys_status.setStyleSheet(f"font-size: 7px; font-weight: bold; color: {COL_ACCENT};")
+            self.lbl_sys_status.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_ACCENT};")
             self.lbl_proc_snapshot.setText("Menunggu data serial dari ESP32...")
 
     def _toggle_recording(self):
@@ -1699,7 +1753,7 @@ class Dashboard(QWidget):
                 self.record_start_time = time.perf_counter()
                 self.recording = True
                 self.btn_toggle_rec.setText("BERHENTI RECORDING")
-                self.btn_toggle_rec.setStyleSheet(f"background-color: {COL_BAD}; color: #ffffff; font-weight: bold; font-size: 7px; height: 20px;")
+                self.btn_toggle_rec.setStyleSheet(f"background-color: {COL_BAD}; color: #ffffff; font-weight: bold; font-size: 9px; height: 24px;")
                 self.lbl_rec_status.setText(f"● MENULIS -> {os.path.basename(filename)}")
             except Exception as e:
                 print(f"Gagal membuat file log: {e}")
@@ -1709,7 +1763,7 @@ class Dashboard(QWidget):
                 self.csv_file.close()
                 self.csv_file = None
             self.btn_toggle_rec.setText("MULAI RECORDING")
-            self.btn_toggle_rec.setStyleSheet("background-color: #cfcfcf; color: #000000; font-weight: bold; font-size: 7px; height: 20px;")
+            self.btn_toggle_rec.setStyleSheet("background-color: #cfcfcf; color: #000000; font-weight: bold; font-size: 9px; height: 24px;")
             self.lbl_rec_status.setText("● Berkas Tersimpan")
             self._refresh_log_list()
 
@@ -1745,7 +1799,7 @@ class Dashboard(QWidget):
             self.lbl_logdet_pos.setText("0 / 0")
         self._logdet_render_diagnosis_summary()
 
-        self._change_page(5)
+        self._change_page(3)
 
     def _open_log_detail_from_button(self):
         current_item = self.log_list.currentItem()
