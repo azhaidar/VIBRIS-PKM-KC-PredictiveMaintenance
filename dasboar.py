@@ -1,6 +1,6 @@
 # ==============================================================================
-# VIBRIS INDUSTRIAL HMI - 1800+ LINES ENTERPRISE ENGINE (UNIFIED DUAL-MODE)
-# Pembaruan: Penambahan Mode Tanpa Kalibrasi (Direct Monitoring / Tanpa Baseline R)
+# VIBRIS INDUSTRIAL HMI - 1800+ LINES ENTERPRISE ENGINE (PERSISTENT SLOT STORAGE)
+# Pembaruan: Riwayat Slot Mesin & Kalibrasi Disimpan Otomatis ke Berkas Lokal
 # ==============================================================================
 
 import sys
@@ -37,6 +37,7 @@ import pyqtgraph as pg
 SERIAL_PORT = '/dev/ttyACM0'
 BAUD_RATE = 115200
 LOG_DIR = "logs"
+CONFIG_FILE = "machines_config.json"
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
@@ -60,7 +61,7 @@ D2_THRESHOLD_BAHAYA = 13.28
 
 STATUS_SEVERITY = {"diam": -1, "normal": 0, "waspada": 1, "bahaya": 2}
 
-# ===================== MODAL FORM TAMBAH SLOT (DENGAN OPSI MODE TANPA KALIBRASI) =====================
+# ===================== MODAL FORM TAMBAH SLOT =====================
 class AddMachineDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -224,7 +225,7 @@ class GradientGauge(QWidget):
 class Dashboard(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("HMI | VIBRIS PIMNAS - 1800+ ENTERPRISE ENGINE (UNIFIED DUAL-MODE)")
+        self.setWindowTitle("HMI | VIBRIS PIMNAS - 1800+ ENTERPRISE ENGINE (PERSISTENT STORAGE)")
         self.setWindowFlags(
             Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
@@ -326,11 +327,9 @@ class Dashboard(QWidget):
         self.ser = None
         self.serial_connected = False
 
-        self.machines = [
-            {"name": "Blower Industri UMKM", "icon": "🌀", "slot_char": "0", "bearing_cmd": "B", "cluster_cmd": "W", "no_calib": False, "rpm_cluster": "Medium (2800 RPM)", "baseline_d2": 9.49, "fw_cluster": "Klaster B"},
-            {"name": "Motor Induksi Pompa Air", "icon": "💧", "slot_char": "1", "bearing_cmd": "A", "cluster_cmd": "V", "no_calib": False, "rpm_cluster": "Low (1400 RPM)", "baseline_d2": 8.00, "fw_cluster": "Klaster A"},
-        ]
-        self.selected_machine_idx = 0
+        # Memuat konfigurasi slot mesin dari penyimpanan lokal (JSON)
+        self.machines = self._load_machines_config()
+        self.selected_machine_idx = 0 if self.machines else -1
         self.machine_delete_mode = False
         self.is_technician_mode = True
 
@@ -351,7 +350,8 @@ class Dashboard(QWidget):
         )
         self.header_frame.setLayout(header)
 
-        self.lbl_machine_active = QPushButton("⚙️ Slot [0]")
+        initial_slot_str = self.machines[0]["slot_char"] if self.machines else "-"
+        self.lbl_machine_active = QPushButton(f"⚙️ Slot [{initial_slot_str}]")
         self.lbl_machine_active.setStyleSheet(
             f"QPushButton {{ background-color: {COL_ACCENT_DIM}; color: {COL_TEXT_LIGHT}; font-size: 8px; "
             f"font-weight: bold; padding: 3px 4px; border: 1px solid #2a3542; border-radius: 2px; text-align: left; }}"
@@ -482,6 +482,37 @@ class Dashboard(QWidget):
         self._refresh_log_list()
         self.show()
 
+    # =========================================================================
+    # METODE PERSISTENSI PENYIMPANAN LOKAL (JSON)
+    # =========================================================================
+    def _load_machines_config(self):
+        default_machines = [
+            {"name": "Blower Industri UMKM", "icon": "🌀", "slot_char": "0", "bearing_cmd": "B", "cluster_cmd": "W", "no_calib": False, "rpm_cluster": "Medium (2800 RPM)", "baseline_d2": 9.49, "fw_cluster": "Klaster B"},
+            {"name": "Motor Induksi Pompa Air", "icon": "💧", "slot_char": "1", "bearing_cmd": "A", "cluster_cmd": "V", "no_calib": False, "rpm_cluster": "Low (1400 RPM)", "baseline_d2": 8.00, "fw_cluster": "Klaster A"},
+        ]
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        return data
+            except Exception as e:
+                print(f"Gagal memuat konfigurasi mesin: {e}")
+        return default_machines
+
+    def _save_machines_config(self):
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.machines, f, indent=4)
+        except Exception as e:
+            print(f"Gagal menyimpan konfigurasi mesin: {e}")
+
+    def closeEvent(self, event):
+        self._save_machines_config()
+        if self.csv_file:
+            self.csv_file.close()
+        event.accept()
+
     def _toggle_mode_system(self):
         self.is_technician_mode = not self.is_technician_mode
         self._apply_mode_ui_layout()
@@ -590,7 +621,8 @@ class Dashboard(QWidget):
         lay.setContentsMargins(0, 2, 0, 2)
         lay.setSpacing(6)
 
-        self.lbl_beranda_sub = QLabel("Mesin: - Pilih Slot -")
+        current_name = self.machines[self.selected_machine_idx]["name"] if self.selected_machine_idx >= 0 and self.machines else "- Pilih Slot -"
+        self.lbl_beranda_sub = QLabel(f"Mesin: {current_name}")
         self.lbl_beranda_sub.setAlignment(Qt.AlignCenter)
         self.lbl_beranda_sub.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {COL_TEXT_DIM};")
         lay.addWidget(self.lbl_beranda_sub)
@@ -1215,6 +1247,7 @@ class Dashboard(QWidget):
             new_data = dlg.get_data()
             new_idx = len(self.machines)
             self.machines.append(new_data)
+            self._save_machines_config()  # Simpan ke memori lokal
             self._rebuild_machine_grid()
             if hasattr(self, 'awam_machine_grid'):
                 self._rebuild_awam_machine_grid()
@@ -1226,6 +1259,7 @@ class Dashboard(QWidget):
                 QMessageBox.warning(self, "Peringatan", "Slot utama (0 & 1) tidak dapat dihapus!")
                 return
             self.machines.pop(idx)
+            self._save_machines_config()  # Simpan ke memori lokal
             if self.selected_machine_idx == idx:
                 self.selected_machine_idx = -1
                 self.lbl_machine_active.setText("⚙️ - Pilih Slot -")
@@ -1520,7 +1554,7 @@ class Dashboard(QWidget):
 
                 if self.recording and self.csv_writer:
                     elapsed = time.perf_counter() - self.record_start_time
-                    machine_name = self.machines[self.selected_machine_idx]["name"] if self.selected_machine_idx >= 0 else "Belum Dipilih"
+                    machine_name = self.machines[self.selected_machine_idx]["name"] if self.selected_machine_idx >= 0 and self.selected_machine_idx < len(self.machines) else "Belum Dipilih"
                     self.csv_writer.writerow([
                         round(elapsed, 3), machine_name,
                         self.current_v, self.current_a, self.current_temp,
@@ -1590,9 +1624,9 @@ class Dashboard(QWidget):
 
     def _show_debug_info(self):
         port_info = self.ser.port if (self.ser is not None) else "(belum ada koneksi)"
-        selected_machine_name = self.machines[self.selected_machine_idx]["name"] if self.selected_machine_idx >= 0 else "Belum dipilih"
-        active_slot = self.machines[self.selected_machine_idx].get("slot_char", "-") if self.selected_machine_idx >= 0 else "N/A"
-        is_no_calib = self.machines[self.selected_machine_idx].get("no_calib", False) if self.selected_machine_idx >= 0 else False
+        selected_machine_name = self.machines[self.selected_machine_idx]["name"] if self.selected_machine_idx >= 0 and self.selected_machine_idx < len(self.machines) else "Belum dipilih"
+        active_slot = self.machines[self.selected_machine_idx].get("slot_char", "-") if self.selected_machine_idx >= 0 and self.selected_machine_idx < len(self.machines) else "N/A"
+        is_no_calib = self.machines[self.selected_machine_idx].get("no_calib", False) if self.selected_machine_idx >= 0 and self.selected_machine_idx < len(self.machines) else False
         info = (
             f"Status koneksi   : {'TERSAMBUNG' if self.serial_connected else 'TIDAK TERSAMBUNG'}\n"
             f"Port serial      : {port_info}\n"
@@ -1693,7 +1727,7 @@ class Dashboard(QWidget):
             self.gauge_s.set_value(self.current_a, status_key)
             self.gauge_t.set_value(self.current_temp, status_key)
 
-            machine_name = self.machines[self.selected_machine_idx]["name"] if self.selected_machine_idx >= 0 else "Belum dipilih"
+            machine_name = self.machines[self.selected_machine_idx]["name"] if self.selected_machine_idx >= 0 and self.selected_machine_idx < len(self.machines) else "Belum dipilih"
             self.lbl_sum_machine.setText(f"Target: {machine_name}")
 
             self._evaluate_diagnosis(self.current_v, self.current_temp, self.current_status_device)
