@@ -48,43 +48,48 @@ dibuat.
 // ============================================================
 // MESIN 1 (slot 0, regime 0 / default)
 // ============================================================
-#define FACTORY_PRESET_MESIN1_READY 1   // <-- DIPERBARUI 21 Agustus 2026. Lihat catatan di bawah.
+#define FACTORY_PRESET_MESIN1_READY 1   // <-- DIPERBARUI 22 Agustus 2026 pagi (06:43:39). Lihat catatan di bawah.
 
-// UPDATE (21 Agustus 2026, sesi 21:31-21:34) -- preset LAMA (20 Agustus,
-// mean getaran 2.26) TERBUKTI SUDAH GAK COCOK lagi sama Motor 1 fisik
-// hari ini: dites langsung (`vibris_20260821_2055_kondisiNormal.csv`,
-// ground_truth NORMAL murni), getaran asli motor jalan di kisaran 4,6-7,2,
-// jauh di atas 2.26 -- D2 langsung melonjak ke 40-70 (ambang Bahaya cuma
-// 11.345) padahal motor SEHAT, gak ada fault. Kemungkinan besar preset
-// lama itu direkam dalam kondisi mounting/beban yang beda dari sekarang.
+// UPDATE (22 Agustus 2026, 06:43:39) -- preset SEBELUMNYA di slot ini (05:59:36,
+// mean 2.348) BELUM SEMPAT dites -- device belum pernah di-flash ulang sejak
+// preset itu ditulis, jadi nggak pernah benar-benar dicoba. Preset di bawah
+// ini dari kalibrasi live TERBARU (06:40:39-06:43:39, log baris 5331-6219,
+// `vibris_20260822_0640_kondisiNormal.csv`), sinyalnya PALING BAGUS dari
+// semua kalibrasi pagi ini:
+//   - RPM stabil SANGAT sempit 1480-1490 RPM sepanjang kalibrasi (nameplate
+//     motor 1400 RPM).
+//   - SNR rata-rata 8.72, minimum 4.83 (ambang cuma 3.0) -- margin paling
+//     lebar dari semua kalibrasi pagi ini (lawan: 05:59:36 cuma rata-rata 7.5).
+//   - Self-test 4 menit sesudahnya: 2 lonjakan D2 sempat kelihatan (779 di
+//     detik pertama, dan turun bertahap 116->17 tepat pas kalibrasi baru
+//     selesai) -- KEDUANYA transien 1 baris pas transisi mode, bukan tren
+//     berkelanjutan (lihat MahalanobisDetector.cpp, debounce butuh beberapa
+//     siklus baru mengunci status). Diagnosis fault flicker ~8.5% baris,
+//     tersebar RATA tiap 5 detik sepanjang sesi (bukan menumpuk di satu
+//     titik) -- pola noise biasa, bukan tren memburuk.
 //
-// Kalibrasi ulang PERTAMA (21:18:35) GAGAL ("varians terlalu rendah") --
-// BUKAN karena motor mati (rms_v waktu itu 6,6-7,3, jelas jalan), tapi
-// karena motor jalan TERLALU stabil/konsisten buat lolos ambang
-// MIN_ACCEPTABLE_VARIANCE di InitialBaselineCalibrator.cpp. Percobaan
-// KEDUA (kalibrasi ulang 21:31:28, VALID jam 21:34:27, log baris
-// 19801-20689) akhirnya lolos. Diverifikasi post-kalibrasi (60 detik
-// sisa sesi `vibris_20260821_2130_kondisiNormal.csv`): 565 Normal, 10
-// Diam, NOL Waspada/Bahaya -- baseline baru ini representasi Motor 1
-// yang akurat untuk kondisi fisik SEKARANG.
-//
-// CATATAN JUJUR: preset ini baru 1x kalibrasi bersih, BELUM lolos
-// "VALIDASI SEBELUM DIPERCAYA PENUH" (lihat catatan di atas file ini) --
-// belum diuji ke unit fisik Motor 1 KEDUA, dan belum diuji dengan Motor
-// 1 yang sengaja dirusak (unbalance dkk) buat mastiin Waspada/Bahaya
-// tetap kebaca benar. Aman dipakai lanjut uji unbalance Motor 1
-// sekarang, tapi kalau nanti mounting/motor diganti lagi, ulangi
-// kalibrasi -- preset ini TERBUKTI bisa jadi stale kalau kondisi fisik
-// berubah.
-static float presetMesin1_mean[3]        = {7.953321f, 0.062564f, 0.018011f};
-static float presetMesin1_sigmaInv[3][3] = {{1.065750f, -0.264302f, 0.012827f},
-                                             {-0.264302f, 1.065606f, 0.004578f},
-                                             {0.012827f, 0.004578f, 1.000215f}};
-static float presetMesin1_stdDev[3]      = {0.242014f, 0.008488f, 0.026551f};
-static float presetMesin1_bandMean[4]    = {146.257294f, 84.819695f, 66.021545f, 93.130043f};
-static float presetMesin1_bandStd[4]     = {837.925964f, 489.407318f, 382.725464f, 532.225098f};
-static float presetMesin1_audioMean[AUDIO_BAND_COUNT] = {0.807315f, 0.742594f, 0.072317f};
-static float presetMesin1_audioStd[AUDIO_BAND_COUNT]  = {0.895213f, 0.894945f, 0.098766f};
+// CATATAN JUJUR PENTING (WAJIB dibaca sebelum percaya penuh ke preset ini):
+// 1. INI JUGA baru lolos TES INTERNAL (dites pakai data dari sesi kalibrasi
+//    yang sama, langsung sesudahnya) -- BELUM dites independen. Preset
+//    22:41:59 (21 Agustus malam) kelihatan bersih di tes pertama, lalu gagal
+//    total (100% Bahaya) 18 menit kemudian di sesi terpisah. Preset ini
+//    punya risiko sama sampai device di-flash ulang dan dites TANPA
+//    kalibrasi ulang di sesi terpisah.
+// 2. Suhu Motor 1 TERUS NAIK sejak jam 05:44 tanpa melandai penuh (~29C di
+//    awal -> ~53C jam 06:44, sekitar +1.1C/menit di jendela pendek) --
+//    motor kemungkinan belum mencapai kestabilan termal penuh walau sudah
+//    jalan ~1 jam nonstop. Fitur "laju-suhu" di baseline ini merekam
+//    kondisi motor yang masih (sedikit) memanas. Masalah lama, belum
+//    dibenerin di kode (lihat catatan §3.5).
+static float presetMesin1_mean[3]        = {2.267076f, 0.032966f, 0.033400f};
+static float presetMesin1_sigmaInv[3][3] = {{1.050181f, 0.031905f, -0.229077f},
+                                             {0.031905f, 1.003936f, -0.061511f},
+                                             {-0.229077f, -0.061511f, 1.052936f}};
+static float presetMesin1_stdDev[3]      = {0.116037f, 0.002935f, 0.069400f};
+static float presetMesin1_bandMean[4]    = {316.654602f, 157.565414f, 146.293381f, 20.519840f};
+static float presetMesin1_bandStd[4]     = {1075.397583f, 535.652161f, 492.206696f, 73.218971f};
+static float presetMesin1_audioMean[AUDIO_BAND_COUNT] = {0.413417f, 0.843636f, 0.069801f};
+static float presetMesin1_audioStd[AUDIO_BAND_COUNT]  = {0.111821f, 0.128675f, 0.021493f};
 
 // ============================================================
 // MESIN 1 (slot 0, regime 1 / pulley kecil)
