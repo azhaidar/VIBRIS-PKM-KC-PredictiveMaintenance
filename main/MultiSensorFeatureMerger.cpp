@@ -83,6 +83,11 @@ static float lastTempForRate = -999.0f;   // -999 = belum ada bacaan sebelumnya
 static uint32_t lastTempRateTime = 0;
 static float smoothedTempRate = 0.0f;
 #define TEMP_RATE_EMA_ALPHA 0.2f   // 0-1: makin kecil makin halus (tuning di sini)
+// FIX (25 Agustus 2026): batas waktu "dianggap diam" sebelum rate ditarik
+// balik ke 0. Dipilih 2x TICK_DELAY_SUHU (750ms di config.h) = 1.5 detik --
+// itu jarak wajar antar 2 pembacaan sensor suhu real, jadi kalau sampai 2x
+// lipat itu suhu masih sama, kita cukup yakin laju sebenarnya sudah ~0.
+#define TEMP_RATE_STALE_SECONDS 1.5f
 
 float getSmoothedTempRate(float currentTemp) {
     uint32_t now = millis();
@@ -112,7 +117,28 @@ float getSmoothedTempRate(float currentTemp) {
     // kuat penyebabnya. Fix: kalau suhu BELUM berubah dari pembacaan
     // terakhir, jangan hitung rate baru sama sekali (dt terus menumpuk
     // sampai suhu beneran berubah, gak lagi ke-reset tiap panggilan).
+    // FIX (25 Agustus 2026): baris "if belum berubah, return apa adanya" di
+    // atas ini nyimpen BUG BARU yang ketauan dari data motor NORMAL asli
+    // (sesi 08:12): sensor suhu MLX90614 cuma update tiap 750ms
+    // (TICK_DELAY_SUHU di config.h), dan tiap kali update dia LONCAT dalam
+    // langkah diskrit (mis. 39.39 -> 39.45 -> 39.73 -> 40.09), BUKAN naik
+    // halus kontinu. Satu loncatan 0.3-0.4 derajat dalam waktu singkat itu
+    // menghasilkan rawRate SESAAT yang gede (bisa >0.5 derajat/detik),
+    // padahal laju pemanasan motor SEBENARNYA cuma ~0.01 derajat/detik
+    // kalau dirata-rata semenit. Masalahnya: begitu smoothedTempRate
+    // "kena" nilai loncatan gede itu, dia DIBEKUKAN di situ selama suhu
+    // belum berubah lagi (early return di atas) -- bisa 1-2 detik ke depan
+    // nilainya nyangkut tinggi terus walau nggak ada apa-apa yang terjadi.
+    // Makin sering pola ini kejadian, makin lama D2 nyangkut Bahaya padahal
+    // motor sehat-sehat saja. Fix-nya: kalau suhu BENERAN belum berubah utk
+    // waktu yang cukup lama, itu justru bukti laju sebenarnya SUDAH turun
+    // ke 0 -- jadi tarik smoothedTempRate pelan-pelan ke 0 lewat EMA yang
+    // sama, bukan dibekukan di nilai lompatan terakhir.
     if (currentTemp == lastTempForRate) {
+        float dtSinceLastChange = (now - lastTempRateTime) / 1000.0f;
+        if (dtSinceLastChange > TEMP_RATE_STALE_SECONDS) {
+            smoothedTempRate = TEMP_RATE_EMA_ALPHA * 0.0f + (1.0f - TEMP_RATE_EMA_ALPHA) * smoothedTempRate;
+        }
         return smoothedTempRate;
     }
 

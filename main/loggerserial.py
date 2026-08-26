@@ -43,14 +43,33 @@ DATASET_DIR = "Dataset"   # BARU: semua file CSV/txt hasil logging disimpan di s
 SYSTEM_LOG_FILE = os.path.join(DATASET_DIR, "vibris_system_log.txt")   # BARU: nampung semua baris BUKAN JSON, biar gak hilang
 _timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 _kondisi_aktif = "belumDipilih"
+_slot_aktif = 0   # BARU (25 Agustus 2026): dipakai bareng _kondisi_aktif buat nyusun nama file
 menu_terbuka = threading.Event()   # BARU: kalau nyala, print data JSON DIBUNGKAM sementara
+
+# BARU (25 Agustus 2026): biar dari NAMA FILE doang (tanpa buka isinya/tanpa
+# nginget-inget lagi tadi pilih slot berapa) kamu langsung tau ini data motor
+# yang mana. Angka RPM di sini CUMA LABEL/REFERENSI (dari MENU_KLASTER di atas
+# -- Klaster 1 = Motor 1 Maestri ~1400rpm, Klaster 2 = Motor 2 Shimizu
+# ~2800rpm), BUKAN RPM asli yang diukur sensor -- RPM asli tetap ada di kolom
+# "rpm" dalam CSV-nya, ini cuma penanda "motor uji yang mana" di nama file.
+# Kalau nanti nambah motor ke-3/ke-4, tambah baris di sini juga (samain
+# dengan MENU_KLASTER).
+SLOT_LABEL_UNTUK_NAMA_FILE = {
+    0: "slot0_1400rpm",
+    1: "slot1_2800rpm",
+}
+
+
+def _label_slot(slot):
+    return SLOT_LABEL_UNTUK_NAMA_FILE.get(slot, f"slot{slot}")
 
 
 def _bangun_nama_file():
     global OUTPUT_CSV, SUMMARY_LOG_FILE
     os.makedirs(DATASET_DIR, exist_ok=True)   # BARU: bikin folder Dataset kalau belum ada
-    OUTPUT_CSV = os.path.join(DATASET_DIR, f"vibris_{_timestamp}_{_kondisi_aktif}.csv")
-    SUMMARY_LOG_FILE = os.path.join(DATASET_DIR, f"vibris_{_timestamp}_{_kondisi_aktif}_ringkasan_sesi.txt")
+    label_slot = _label_slot(_slot_aktif)
+    OUTPUT_CSV = os.path.join(DATASET_DIR, f"vibris_{_timestamp}_{label_slot}_{_kondisi_aktif}.csv")
+    SUMMARY_LOG_FILE = os.path.join(DATASET_DIR, f"vibris_{_timestamp}_{label_slot}_{_kondisi_aktif}_ringkasan_sesi.txt")
 
 
 _bangun_nama_file()
@@ -89,7 +108,21 @@ def set_kondisi(ser, kode_menu):
 def pilih_slot(ser, state, slot):
     kirim_command(ser, str(slot))
     state["slot_aktif"] = slot
-    print(f"{Fore.GREEN}[LOGGER] Slot motor aktif sekarang: #{slot}{Style.RESET_ALL}")
+
+    # FIX (25 Agustus 2026): sebelumnya ganti slot cuma update state["slot_aktif"]
+    # (dipakai buat TAMPILAN menu doang) -- nama file CSV/txt sama sekali gak
+    # ikut berubah, jadi walau kamu pindah dari slot 0 ke slot 1, data tetap
+    # nyasar ke file lama yang namanya nggak nyebut slot sama sekali. Disamakan
+    # sama pola set_kondisi() di atas: ganti global _slot_aktif, lalu bangun
+    # ulang nama file. Baris "if OUTPUT_CSV != current_csv_path" di loop utama
+    # (bagian bawah file ini) YANG SUDAH ADA dari awal bakal otomatis nutup
+    # file lama & buka file baru begitu OUTPUT_CSV berubah -- jadi cukup
+    # panggil _bangun_nama_file() di sini, gak perlu ubah apa-apa lagi di loop.
+    global _slot_aktif
+    _slot_aktif = slot
+    _bangun_nama_file()
+    print(f"{Fore.GREEN}[LOGGER] Slot motor aktif sekarang: #{slot}. "
+          f"File akan disimpan sebagai {OUTPUT_CSV}{Style.RESET_ALL}")
 
     # FIX (21 Agustus 2026): sebelumnya baris "klaster bearing" di header
     # menu utama TIDAK PERNAH ke-update di sini -- cuma ke-update kalau user
@@ -292,6 +325,62 @@ def submenu_kalibrasi(ser, state):
         print(f"{Fore.RED}[LOGGER] Pilihan tidak dikenal, coba lagi.{Style.RESET_ALL}")
 
 
+# FIX (25 Agustus 2026 -- root cause "reboot lalu ESP32 diam total"):
+#
+# Board ini ESP32-S3, dan ESP32-S3 punya USB CDC BAWAAN di dalam chip-nya
+# sendiri -- bukan chip jembatan USB->Serial terpisah kayak CP2102/CH340
+# yang dipakai board ESP32 lawas. Bedanya PENTING banget di sini:
+#   - Di board dengan CP2102/CH340: pas ESP32-nya di-reset, chip USB-nya
+#     TETAP HIDUP (dia chip terpisah). Port COM di Windows nggak pernah
+#     hilang, cuma datanya berhenti sebentar lalu jalan lagi.
+#   - Di ESP32-S3 (board ini): pas ESP.restart() dipanggil, SELURUH
+#     periferal USB ikut di-reset, termasuk yang bikin port COM itu ada.
+#     Windows BENERAN melihat device-nya cabut lalu colok lagi (kayak
+#     kamu cabut-colok kabel USB-nya secara fisik).
+#
+# Efeknya ke Python: objek `serial.Serial` yang kita buka di awal (variabel
+# `ser`) itu isinya HANDLE ke device versi SEBELUM reboot. Begitu device-nya
+# "cabut-colok" dari sudut pandang Windows, handle lama itu PATAH PERMANEN.
+# Baca lewat handle yang sudah patah nggak akan pernah dapat apa-apa lagi --
+# BUKAN error yang kelihatan, cuma diam selamanya. Ini kenapa sebelumnya
+# setelah reboot, terminal cuma nampilin baris [LOGGER] (itu dari Python
+# sendiri, gak lewat serial) dan baris [SYSTEM]/[CMD] dari ESP32 nggak
+# pernah muncul lagi walau ESP32-nya sendiri sudah nyala normal dan
+# ngirim data -- yang "budek" itu SISI PYTHON-nya, bukan ESP32-nya.
+#
+# Solusinya: begitu kita minta ESP32 reboot, kita HARUS bikin ulang objek
+# serial.Serial dari NOL (bukan cuma nunggu), dan simpan handle yang baru
+# ke `state["ser"]` -- supaya SEMUA bagian program (thread menu maupun
+# loop pembaca data utama) otomatis pakai handle yang masih hidup.
+def reconnect_serial(state):
+    try:
+        state["ser"].close()
+    except Exception:
+        pass   # kalau port memang sudah putus duluan, nggak apa-apa, lanjut aja
+
+    print(f"{Fore.YELLOW}[LOGGER] ESP32 lagi reboot (port USB sempat hilang-muncul "
+          f"karena board ini pakai USB bawaan ESP32-S3). Menunggu & mencoba "
+          f"sambung ulang ke {SERIAL_PORT}...{Style.RESET_ALL}")
+
+    percobaan_maks = 20   # ~20 detik total, cukup longgar buat boot + re-enumerasi USB
+    for percobaan in range(1, percobaan_maks + 1):
+        time.sleep(1)
+        try:
+            state["ser"] = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=2)
+            print(f"{Fore.GREEN}[LOGGER] Tersambung ulang ke {SERIAL_PORT} "
+                  f"(percobaan ke-{percobaan}/{percobaan_maks}).{Style.RESET_ALL}")
+            return
+        except serial.SerialException:
+            continue   # port belum muncul lagi / masih dipakai proses lain, coba lagi
+
+    raise serial.SerialException(
+        f"Gagal sambung ulang ke {SERIAL_PORT} setelah {percobaan_maks} detik. "
+        f"Kemungkinan: (1) kabel USB cuma jalur charging, bukan jalur data, "
+        f"(2) nomor COM port GESER setelah reboot -- cek ulang di Device Manager "
+        f"dan update SERIAL_PORT di bagian atas file ini kalau berubah."
+    )
+
+
 def submenu_sistem(ser, state):
     while True:
         print(f"\n{Fore.CYAN}--- SISTEM ---{Style.RESET_ALL}")
@@ -305,7 +394,15 @@ def submenu_sistem(ser, state):
             konfirmasi = input(f"{Fore.RED}Yakin reboot ESP32? Koneksi akan terputus sesaat. "
                                 f"Ketik 'YA': {Style.RESET_ALL}")
             if konfirmasi.strip().upper() == "YA":
-                kirim_command(ser, "X")
+                kirim_command(state["ser"], "X")
+                # FIX (25 Agustus 2026): dulu berhenti di sini -- padahal
+                # handle serial lama BAKAL PATAH begitu ESP32 selesai
+                # restart (lihat komentar panjang di atas reconnect_serial).
+                # Sekarang kita aktif nunggu & sambung ulang di sini juga,
+                # supaya begitu kamu balik ke menu utama, program ini SUDAH
+                # bicara sama ESP32 yang baru nyala, bukan masih nyangkut
+                # ke handle mati.
+                reconnect_serial(state)
             else:
                 print(f"{Fore.YELLOW}[LOGGER] Dibatalkan.{Style.RESET_ALL}")
             return
@@ -332,21 +429,31 @@ def menu_utama(ser, state):
         print("  0. Selesai, lanjut memantau data")
         print("  Q. Keluar dari program")
 
+        # FIX (25 Agustus 2026): dulu semua submenu di bawah ini dikasih
+        # `ser` -- parameter yang di-"bekukan" dari SAAT menu_utama() ini
+        # pertama dipanggil. Kalau di TENGAH sesi menu yang sama kamu masuk
+        # ke submenu 5 (Sistem) lalu reboot ESP32, submenu 5 sudah ganti
+        # `state["ser"]` ke handle yang baru -- TAPI submenu lain (1,2,3,dst)
+        # yang dipanggil SESUDAHNYA, dalam menu_utama() yang SAMA, masih
+        # bakal dikasih `ser` versi lama (parameter fungsi ini nggak ikut
+        # ke-update). Supaya semua submenu SELALU pakai handle yang lagi
+        # hidup, ambil dari state["ser"] di sini, tepat sebelum dipanggil --
+        # bukan dari parameter `ser` yang dibekukan di awal.
         pilihan = input("Pilih: ").strip().upper()
         if pilihan == "1":
-            submenu_kondisi(ser, state)
+            submenu_kondisi(state["ser"], state)
         elif pilihan == "2":
-            submenu_slot(ser, state)
+            submenu_slot(state["ser"], state)
         elif pilihan == "3":
-            submenu_sesi_cek(ser, state)
+            submenu_sesi_cek(state["ser"], state)
         elif pilihan == "4":
-            submenu_kalibrasi(ser, state)
+            submenu_kalibrasi(state["ser"], state)
         elif pilihan == "5":
-            submenu_sistem(ser, state)
+            submenu_sistem(state["ser"], state)
         elif pilihan == "6":
-            submenu_regime(ser, state)
+            submenu_regime(state["ser"], state)
         elif pilihan == "7":
-            submenu_bearing(ser, state)
+            submenu_bearing(state["ser"], state)
         elif pilihan == "0":
             return "LANJUT_STREAMING"
         elif pilihan == "Q":
@@ -435,7 +542,11 @@ def thread_menu(ser, state, stop_event):
             break
         if teks == "M":
             menu_terbuka.set()   # BARU: bungkam print data selama menu kebuka
-            hasil = menu_utama(ser, state)
+            # FIX (25 Agustus 2026): ambil dari state["ser"], bukan parameter
+            # `ser` bawaan thread ini -- lihat komentar panjang di
+            # reconnect_serial() kenapa handle lama bisa jadi mati kalau
+            # sebelumnya sempat ada reboot ESP32.
+            hasil = menu_utama(state["ser"], state)
             menu_terbuka.clear()   # BARU: nyalain lagi print data
             if hasil == "KELUAR":
                 stop_event.set()
@@ -471,6 +582,13 @@ def main():
     # diam-diam kalau kamu lupa.
     state = {"slot_aktif": 0, "regime_aktif": 0,
              "klaster_aktif": "BELUM DIPILIH LEWAT MENU INI (firmware pakai default Klaster 1/6203!)"}
+    # FIX (25 Agustus 2026): handle serial sekarang disimpan DI DALAM state
+    # (bukan cuma variabel lokal `ser`), supaya kalau reconnect_serial()
+    # ganti handle-nya (habis reboot ESP32), SEMUA fungsi yang nerima
+    # `state` bisa lihat handle yang paling baru -- bukan pegang salinan
+    # lama yang sudah mati. Variabel lokal `ser` di bawah ini TETAP dipakai
+    # buka koneksi pertama kali saja.
+    state["ser"] = ser
 
     # BARU: data TIDAK mulai mengalir otomatis. User WAJIB ketik S dulu
     # untuk mulai streaming+logging. Sebelum itu, bisa buka menu (M) dulu
@@ -484,9 +602,9 @@ def main():
         if pilihan == "S":
             break
         if pilihan == "M":
-            hasil = menu_utama(ser, state)
+            hasil = menu_utama(state["ser"], state)
             if hasil == "KELUAR":
-                ser.close()
+                state["ser"].close()
                 print("[LOGGER] Keluar sebelum mulai logging.")
                 return
             if hasil == "LANJUT_STREAMING":
@@ -494,7 +612,7 @@ def main():
             # setelah selesai 1 aksi di menu, balik ke prompt S/M/Q ini lagi
             continue
         if pilihan == "Q":
-            ser.close()
+            state["ser"].close()
             print("[LOGGER] Keluar tanpa mulai logging.")
             return
         print(f"{Fore.RED}[LOGGER] Ketik S, M, atau Q.{Style.RESET_ALL}")
@@ -526,7 +644,28 @@ def main():
                 stop_event.set()
                 break
 
-            raw_line = ser.readline().decode("utf-8", errors="ignore").strip()
+            # FIX (25 Agustus 2026): baca state["ser"] SEGAR tiap putaran,
+            # bukan variabel `ser` yang di-set sekali di atas -- kalau
+            # reconnect_serial() baru saja mengganti handle (habis reboot
+            # ESP32 lewat menu Sistem), loop pembaca data ini WAJIB ikut
+            # pindah ke handle baru itu, bukan tetap nyangkut ke handle lama
+            # yang sudah mati.
+            ser = state["ser"]
+            try:
+                raw_line = ser.readline().decode("utf-8", errors="ignore").strip()
+            except serial.SerialException:
+                # FIX (25 Agustus 2026): dulu exception jenis ini langsung
+                # ditangkap oleh `except serial.SerialException` di paling
+                # bawah fungsi ini, yang efeknya MENGHENTIKAN TOTAL sesi
+                # logging (masuk ke blok `finally`, tutup file, keluar).
+                # Itu kejadian kalau ESP32 reboot/putus koneksi TANPA lewat
+                # menu Sistem (misal gara-gara brownout/USB kecabut sendiri)
+                # -- padahal seharusnya program ini cukup nyambung ulang,
+                # bukan langsung nyerah dan berhenti logging.
+                print(f"{Fore.RED}[LOGGER] Koneksi serial putus mendadak "
+                      f"(bukan lewat menu Reboot). Mencoba sambung ulang...{Style.RESET_ALL}")
+                reconnect_serial(state)
+                continue
 
             if not raw_line:
                 continue
@@ -604,7 +743,10 @@ def main():
     finally:
         stop_event.set()
         csv_file.close()
-        ser.close()
+        try:
+            state["ser"].close()
+        except Exception:
+            pass
         print(f"[LOGGER] Selesai. Total {baris_masuk} baris data tersimpan di {OUTPUT_CSV}")
         print(f"[LOGGER] Ringkasan sesi cek (jika ada) tersimpan di {SUMMARY_LOG_FILE}")
 

@@ -77,3 +77,15 @@ void getCurrentStdDev(float stdOutput[3]);
 // slot motor yang BELUM punya baseline tersimpan -- mencegah device pakai
 // baseline motor SEBELUMNYA untuk motor BARU yang karakternya beda.
 void resetBaselineLearner();
+
+// BARU (25 Agustus 2026, FIX LONJAKAN D^2 SESAAT SETELAH GANTI BASELINE):
+// Timestamp (millis()) kapan initializeBaselineLearner() TERAKHIR dipanggil
+// -- yaitu tiap kali baseline berubah (kalibrasi baru selesai, atau pindah
+// slot/regime yang baseline-nya beda). MahalanobisDetector.cpp memakai ini
+// untuk kasih jeda "settle" beberapa detik sebelum status Normal/Waspada/
+// Bahaya mulai dipercaya lagi -- soalnya smoothedRms/smoothedRoughness di
+// sana (EMA feature smoothing) masih bawa nilai dari baseline LAMA sesaat
+// setelah baseline ganti, dan itu bisa bikin D^2 melonjak PALSU (bukan
+// motor beneran Bahaya, cuma angka lama yang belum "narik" ke baseline
+// baru). Lihat komentar lengkap di runDetectionCycle().
+unsigned long getBaselineChangeTimestamp();

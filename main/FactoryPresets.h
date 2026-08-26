@@ -81,16 +81,15 @@ dibuat.
 //    jalan ~1 jam nonstop. Fitur "laju-suhu" di baseline ini merekam
 //    kondisi motor yang masih (sedikit) memanas. Masalah lama, belum
 //    dibenerin di kode (lihat catatan §3.5).
-static float presetMesin1_mean[3]        = {2.267076f, 0.032966f, 0.033400f};
-static float presetMesin1_sigmaInv[3][3] = {{1.050181f, 0.031905f, -0.229077f},
-                                             {0.031905f, 1.003936f, -0.061511f},
-                                             {-0.229077f, -0.061511f, 1.052936f}};
-static float presetMesin1_stdDev[3]      = {0.116037f, 0.002935f, 0.069400f};
-static float presetMesin1_bandMean[4]    = {316.654602f, 157.565414f, 146.293381f, 20.519840f};
-static float presetMesin1_bandStd[4]     = {1075.397583f, 535.652161f, 492.206696f, 73.218971f};
-static float presetMesin1_audioMean[AUDIO_BAND_COUNT] = {0.413417f, 0.843636f, 0.069801f};
-static float presetMesin1_audioStd[AUDIO_BAND_COUNT]  = {0.111821f, 0.128675f, 0.021493f};
-
+static float presetMesin1_mean[3]        = {2.110233f, 0.044460f, 0.020592f};
+static float presetMesin1_sigmaInv[3][3] = {{1.020189f, -0.133843f, -0.054075f},
+                                             {-0.133843f, 1.017839f, 0.023810f},
+                                             {-0.054075f, 0.023810f, 1.003146f}};
+static float presetMesin1_stdDev[3]      = {0.081093f, 0.005724f, 0.032549f};
+static float presetMesin1_bandMean[4]    = {79.339211f, 22.318516f, 55.885414f, 22.439920f};
+static float presetMesin1_bandStd[4]     = {270.470276f, 83.848755f, 192.410172f, 76.503525f};
+static float presetMesin1_audioMean[AUDIO_BAND_COUNT] = {0.227770f, 0.999610f, 0.044206f};
+static float presetMesin1_audioStd[AUDIO_BAND_COUNT]  = {0.031679f, 0.146558f, 0.010947f};
 // ============================================================
 // MESIN 1 (slot 0, regime 1 / pulley kecil)
 // ============================================================

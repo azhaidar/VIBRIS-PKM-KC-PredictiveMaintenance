@@ -115,29 +115,38 @@ static void printFactoryPresetExport(int slot, int regime, float mean[3], float 
     Serial.println(F("[EXPORT PRESET] Selesai.\n"));
 }
 
+// FIX (25 Agustus 2026): dulu urutan pengecekannya FLASH DULU baru preset --
+// jadi begitu slot 0/1 PERNAH dikalibrasi sekali aja lewat 'R' (walau cuma
+// 1 sesi 180 detik yang belum tentu bersih), hasilnya kesimpen ke flash dan
+// SELAMANYA mengalahkan preset pabrikan yang sudah kita susun hati-hati
+// (multi-sesi + margin aman tervalidasi) di FactoryPresets.h -- preset itu
+// jadi kayak "mati suri", nggak pernah kepakai lagi tanpa kita sadar.
+// Sekarang dibalik: preset pabrikan (kalau sudah READY) itu SUMBER
+// KEBENARAN TUNGGAL buat slot yang sudah "dikenal" -- gak bisa ditimpa
+// diam-diam lewat kalibrasi cepat. Satu-satunya cara update preset slot
+// ini adalah EDIT MANUAL FactoryPresets.h + reflash -- itu SENGAJA, biar
+// setiap perubahan baseline motor yang sudah dikenal melalui review
+// manusia dulu (cek apakah kalibrasinya bersih), bukan otomatis dipercaya
+// begitu saja. Slot yang BELUM py preset (3-9) tetap bebas kalibrasi
+// hidup seperti biasa -- fungsi ini dipakai juga di serial command handler
+// 'R'/'Z' supaya keduanya konsisten.
+bool isPresetLockedSlot(int slot, int regime) {
+    if (slot == 0 && regime == 0 && FACTORY_PRESET_MESIN1_READY) return true;
+    if (slot == 0 && regime == 1 && FACTORY_PRESET_MESIN1_REGIME1_READY) return true;
+    if (slot == 0 && regime == 2 && FACTORY_PRESET_MESIN1_REGIME2_READY) return true;
+    if (slot == 1 && regime == 0 && FACTORY_PRESET_MESIN2_READY) return true;
+    return false;
+}
+
 static void applyMachineBaseline(int slot, int regime) {
     float mean[3], sigmaInv[3][3], stdDev[3];
-    if (loadBaselineFromFlash(slot, mean, sigmaInv, stdDev, regime)) {
-        setFeatureStdDev(stdDev);
-        initializeBaselineLearner(mean, stdDev, sigmaInv);
-
-        float bandMean[4], bandStd[4];
-        if (loadBandBaselineFromFlash(slot, bandMean, bandStd, regime)) {
-            setDiagnosisBandBaseline(bandMean, bandStd);
-        }
-        float audioMean[AUDIO_BAND_COUNT], audioStd[AUDIO_BAND_COUNT];
-        if (loadAudioBandBaselineFromFlash(slot, audioMean, audioStd, regime)) {
-            setAudioBandBaseline(audioMean, audioStd);
-        }
-        Serial.printf("[SYSTEM] Baseline mesin #%d regime #%d dimuat -- deteksi langsung aktif.\n", slot, regime);
-    }
-    // BARU (20 Agustus 2026): kalau flash KOSONG (belum pernah dikalibrasi
-    // sama sekali di device INI), coba dulu preset pabrikan sebelum maksa
-    // user kalibrasi manual. Ini KHUSUS slot 0/1 regime 0 (Mesin 1/Mesin 2
-    // "default") -- lihat FactoryPresets.h. Saklar *_READY di file itu
-    // HARUS true dulu (baru diisi manual setelah kalibrasi bersih), kalau
-    // masih false blok ini gak pernah kepakai sama sekali (aman).
-    else if (slot == 0 && regime == 0 && FACTORY_PRESET_MESIN1_READY) {
+    // FIX (25 Agustus 2026): preset dicek DULUAN sekarang, SEBELUM flash --
+    // lihat komentar panjang di isPresetLockedSlot() di atas. Ini SATU
+    // rantai if/else-if/else (bukan 2 blok terpisah) supaya cuma SATU
+    // cabang yang jalan tiap kali fungsi ini dipanggil -- versi sebelumnya
+    // sempat kepecah jadi 2 blok independen yang salah (flash yang baru
+    // aja dimuat bisa langsung ketimpa lagi sama cabang else terakhir).
+    if (slot == 0 && regime == 0 && FACTORY_PRESET_MESIN1_READY) {
         setFeatureStdDev(presetMesin1_stdDev);
         initializeBaselineLearner(presetMesin1_mean, presetMesin1_stdDev, presetMesin1_sigmaInv);
         setDiagnosisBandBaseline(presetMesin1_bandMean, presetMesin1_bandStd);
@@ -171,6 +180,23 @@ static void applyMachineBaseline(int slot, int regime) {
         setDiagnosisBandBaseline(presetMesin2_bandMean, presetMesin2_bandStd);
         setAudioBandBaseline(presetMesin2_audioMean, presetMesin2_audioStd);
         Serial.println(F("[SYSTEM] Preset pabrikan Mesin 2 dimuat -- deteksi langsung aktif TANPA kalibrasi."));
+    }
+    // Slot yang TIDAK dikunci preset (misal slot 2-9, atau slot 0/1 sebelum
+    // preset-nya diisi READY): baru di sini cek flash -- baseline dari
+    // kalibrasi 'R' terakhir kali slot ini dipakai.
+    else if (loadBaselineFromFlash(slot, mean, sigmaInv, stdDev, regime)) {
+        setFeatureStdDev(stdDev);
+        initializeBaselineLearner(mean, stdDev, sigmaInv);
+
+        float bandMean[4], bandStd[4];
+        if (loadBandBaselineFromFlash(slot, bandMean, bandStd, regime)) {
+            setDiagnosisBandBaseline(bandMean, bandStd);
+        }
+        float audioMean[AUDIO_BAND_COUNT], audioStd[AUDIO_BAND_COUNT];
+        if (loadAudioBandBaselineFromFlash(slot, audioMean, audioStd, regime)) {
+            setAudioBandBaseline(audioMean, audioStd);
+        }
+        Serial.printf("[SYSTEM] Baseline mesin #%d regime #%d dimuat dari flash -- deteksi langsung aktif.\n", slot, regime);
     }
     else {
         resetBaselineLearner();
@@ -276,7 +302,21 @@ void loop() {
             // 'a'=regime 0 (default/sama kayak sebelum fitur ini ada), 'b'=regime 1, dst.
             selectRegime(cmd - 'a');
         } else if (cmd == 'R') {   // 'R' = trigger kalibrasi ulang, TANPA reboot/putus koneksi
-            if (isCheckSessionActive()) {
+            // FIX (25 Agustus 2026): slot yang udah dikunci preset (lihat
+            // isPresetLockedSlot() di atas) DITOLAK di sini -- supaya nggak
+            // ada lagi kejadian kalibrasi 1 sesi cepat (bisa aja motor lagi
+            // nggak stabil/mounting goyang) diam-diam nimpa preset yang udah
+            // divalidasi hati-hati. Kalau memang mau update preset slot ini,
+            // caranya SENGAJA dibikin manual: edit angka baru langsung ke
+            // FactoryPresets.h + reflash -- bukan lewat command serial.
+            if (isPresetLockedSlot(currentMachineSlot, currentRegime)) {
+                Serial.printf("[CMD] Kalibrasi ulang DITOLAK -- slot #%d regime #%d dikunci ke preset pabrikan "
+                              "(FactoryPresets.h). Preset ini cuma boleh diganti lewat edit kode manual + reflash, "
+                              "supaya kalibrasi barunya sempat direview dulu sebelum dipercaya. Kalau memang mau "
+                              "kalibrasi ulang slot ini, kumpulkan datanya dulu (bisa pakai slot kosong lain buat uji "
+                              "coba), baru masukkan manual ke FactoryPresets.h kalau hasilnya sudah bersih.\n",
+                              currentMachineSlot, currentRegime);
+            } else if (isCheckSessionActive()) {
                 Serial.println(F("[CMD] Kalibrasi ulang DITOLAK -- sesi Check sedang berjalan, tunggu selesai (1 menit) dulu."));
             } else {
                 Serial.println(F("[CMD] Kalibrasi ulang diminta dari Raspi/laptop..."));
@@ -310,6 +350,19 @@ void loop() {
                 Serial.printf("[SLOT #%d] Belum pernah ada hasil cek tersimpan.\n", currentMachineSlot);
             }
         } else if (cmd == 'Z') {
+            // FIX (25 Agustus 2026): ditolak juga di slot yang dikunci preset
+            // -- sejak fix di atas, preset SELALU menang di slot ini apapun
+            // isi flash-nya, jadi 'Z' di sini nggak akan ngubah apa-apa
+            // secara nyata (cuma bikin bingung karena user ngira ini
+            // ngapa-ngapain). Tolak dari awal biar jelas kenapa gak
+            // ngefek, daripada diam-diam gak berasa apa-apa.
+            if (isPresetLockedSlot(currentMachineSlot, currentRegime)) {
+                Serial.printf("[CMD] Hapus baseline DITOLAK -- slot #%d regime #%d dikunci ke preset pabrikan, "
+                              "jadi flash-nya nggak dipakai sama sekali (lihat isPresetLockedSlot()). "
+                              "Nggak ada yang perlu dihapus di sini.\n",
+                              currentMachineSlot, currentRegime);
+                return;
+            }
             deleteBaselineFromFlash(currentMachineSlot, currentRegime);
             deleteCheckSummaryFromFlash(currentMachineSlot);
             resetBaselineLearner();
