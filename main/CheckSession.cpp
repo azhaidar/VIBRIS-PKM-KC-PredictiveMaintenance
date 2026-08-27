@@ -40,8 +40,12 @@ void updateCheckSession(DetectionResult result, float currentTemp) {
 
     if (strcmp(result.diagnosis_label, "UNBALANCE") == 0) countUnbalance++;
     else if (strcmp(result.diagnosis_label, "MISALIGNMENT") == 0) countMisalign++;
-    else if (strcmp(result.diagnosis_label, "BEARING_BPFO") == 0) countBpfo++;
-    else if (strcmp(result.diagnosis_label, "BEARING_BPFI") == 0) countBpfi++;
+    // FIX (27 Agustus 2026): DiagnosisClassifier sekarang keluarin satu
+    // label gabungan "BEARING_FAULT" (bukan "BEARING_BPFO"/"BEARING_BPFI"
+    // terpisah), jadi dihitung ke countBpfo saja. countBpfi sengaja
+    // dibiarkan 0 -- fieldnya tetap ada di summary supaya struct lama di
+    // flash tidak rusak, tapi tidak dipakai lagi.
+    else if (strcmp(result.diagnosis_label, "BEARING_FAULT") == 0) countBpfo++;
 
     sumHealthScore += result.health_score;
     sampleCount++;
