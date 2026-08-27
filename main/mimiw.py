@@ -98,7 +98,7 @@ class AddMachineDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Tambah Slot Mesin & Protokol Hardware")
-        self.setFixedSize(300, 235)  # FIX (27 Agustus 2026): dikecilin, satu baris field (Kegunaan) dihapus
+        self.setFixedSize(300, 235) 
         self.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; font-family: Arial; font-size: 8px;")
 
         layout = QVBoxLayout(self)
@@ -145,7 +145,7 @@ class AddMachineDialog(QDialog):
         self.btn_save.clicked.connect(self.accept)
 
         self.btn_cancel = QPushButton("Batal")
-        self.btn_cancel.setStyleSheet("background-color: #444; color: #000; padding: 4px;")
+        self.btn_cancel.setStyleSheet("background-color: #444; color: #fff; padding: 4px;")
         self.btn_cancel.clicked.connect(self.reject)
 
         btn_layout.addWidget(self.btn_save)
@@ -358,6 +358,7 @@ class Dashboard(QWidget):
         self.csv_writer = None
         self.ser = None
         self.serial_connected = False
+        self.last_serial_error = ""
         self.last_raw_data = {}
 
         self.dataset_recording = False
@@ -475,7 +476,7 @@ class Dashboard(QWidget):
         self.stack.addWidget(self._page_awam_beranda())        
         self.stack.addWidget(self._page_awam_mesin_saya())     
 
-        self.stack.addWidget(self._page_machine_select())     
+        self.stack.addWidget(self._page_machine_select())      
         self.stack.addWidget(self._page_log_detail())          
         self.stack.addWidget(self._page_raw())                 
         self.stack.addWidget(self._page_recording())           
@@ -615,7 +616,7 @@ class Dashboard(QWidget):
 
             self._change_page(4)
         else:
-            self.btn_mode_toggle.setText("MODE: USER")
+            self.btn_mode_toggle.setText("MODE: AWAM")
             self.btn_mode_toggle.setStyleSheet(
                 "QPushButton { background-color: #38bdf8; color: #101216; font-weight: bold; font-size: 7px; padding: 3px; border-radius: 2px; border: 1px solid #38bdf8; }"
                 "QPushButton:hover { background-color: #0ea5e9; }"
@@ -1225,7 +1226,7 @@ class Dashboard(QWidget):
         if not self.is_technician_mode:
             self._change_page(10)
         self._loading_dots_step = 0
-        self._loading_dots_total_tick = durasi_detik * 2  
+        self._loading_dots_total_tick = durasi_detik * 2 
         self._loading_on_selesai = on_selesai
         self._set_proses_labels(judul, "", "Menyiapkan...")
 
@@ -1850,7 +1851,7 @@ class Dashboard(QWidget):
             new_data = dlg.get_data()
             new_idx = len(self.machines)
             self.machines.append(new_data)
-            self._save_machines_config()  # Simpan ke memori lokal
+            self._save_machines_config()  
             self._rebuild_machine_grid()
             if hasattr(self, 'awam_machine_grid'):
                 self._rebuild_awam_machine_grid()
@@ -1862,7 +1863,7 @@ class Dashboard(QWidget):
                 QMessageBox.warning(self, "Peringatan", "Slot utama (0 & 1) tidak dapat dihapus!")
                 return
             self.machines.pop(idx)
-            self._save_machines_config()  # Simpan ke memori lokal
+            self._save_machines_config()  
             if self.selected_machine_idx == idx:
                 self.selected_machine_idx = -1
                 self.lbl_machine_active.setText("⚙️ - Pilih Slot -")
@@ -2063,16 +2064,20 @@ class Dashboard(QWidget):
         if serial is not None:
             t = threading.Thread(target=self._read_serial_worker, daemon=True)
             t.start()
+        else:
+            self.last_serial_error = (
+                "Modul pyserial belum terinstall. Jalankan: pip install pyserial"
+            )
 
     def _resolve_serial_port(self):
         try:
             ports = list(serial.tools.list_ports.comports())
         except Exception:
             ports = []
-        if not ports: 
+        if not ports:
             return SERIAL_PORT
         available = [p.device for p in ports]
-        if SERIAL_PORT in available: 
+        if SERIAL_PORT in available:
             return SERIAL_PORT
         for p in ports:
             desc = f"{p.description} {p.manufacturer or ''}".upper()
@@ -2085,8 +2090,16 @@ class Dashboard(QWidget):
             try:
                 if self.ser is None or not self.ser.is_open:
                     port_to_use = self._resolve_serial_port()
-                    self.ser = serial.Serial(port_to_use, BAUD_RATE, timeout=0.1)
+                    try:
+                        self.ser = serial.Serial(port_to_use, BAUD_RATE, timeout=0.1)
+                    except Exception as open_err:
+                        self.serial_connected = False
+                        self.ser = None
+                        self.last_serial_error = f"{type(open_err).__name__}: {open_err}"
+                        time.sleep(1)
+                        continue
                     self.serial_connected = True
+                    self.last_serial_error = ""
 
                 raw = self.ser.readline()
                 if not raw:
@@ -2196,6 +2209,7 @@ class Dashboard(QWidget):
             except Exception as e:
                 self.serial_connected = False
                 self.ser = None
+                self.last_serial_error = f"{type(e).__name__}: {e}"
                 time.sleep(1)
 
     def _trigger_auto_event_snapshot(self, status_severity_str):
@@ -2329,6 +2343,8 @@ class Dashboard(QWidget):
                 f"Tmp: {self.current_temp:.1f} °C | RPM: {rpm_txt} | D²: {d2_txt}"
             )
 
+            status_key = (self.current_status_device or "").strip().lower()
+
             self.gauge_v.set_value(self.current_v, status_key)
             self.gauge_s.set_value(self.current_a, status_key)
             self.gauge_t.set_value(self.current_temp, status_key)
@@ -2369,7 +2385,10 @@ class Dashboard(QWidget):
 
                 self._render_session_summary()
         elif not self.serial_connected:
-            self.lbl_sys_status.setText("● MENCARI PERANGKAT (COM3)...")
+            if self.last_serial_error:
+                self.lbl_sys_status.setText(f"● GAGAL SAMBUNG: {self.last_serial_error}")
+            else:
+                self.lbl_sys_status.setText("● MENCARI PERANGKAT...")
             self.lbl_sys_status.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_WARN};")
         else:
             self.lbl_sys_status.setText("● TERSAMBUNG — MENUNGGU DATA JSON...")
@@ -2610,7 +2629,7 @@ class Dashboard(QWidget):
                 f"Data berhasil diexport ke:\n{xlsx_path}\n\nTotal {len(data_rows)} baris data."
             )
         except Exception as e:
-            QMessageBox.critical(self, "Export Gagal", f"Terjadi kesaBlahan saat export:\n{e}")
+            QMessageBox.critical(self, "Export Gagal", f"Terjadi kesalahan saat export:\n{e}")
 
 class GlobalEscHandler(QApplication):
     def notify(self, receiver, event):
