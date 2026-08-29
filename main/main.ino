@@ -44,21 +44,17 @@
 // juga, baru dianggap SensorFault sungguhan (sensor/kabel bermasalah).
 #define WARMUP_GRACE_MS 8000
 #define PLOTTER_MODE 0
+#define CALIBRATION_DURATION_MS 180000UL 
 
 static unsigned long bootMillis = 0;
 static char groundTruthLabel[16] = "NORMAL";
 
 static float bandBaselineMean[4] = {0.20f, 0.20f, 0.20f, 0.20f};
 static float bandBaselineStd[4]  = {0.10f, 0.10f, 0.10f, 0.10f};
-#define CALIBRATION_DURATION_MS 180000UL  
+ 
 static unsigned long calibrationStartMillis = 0;
-static int currentMachineSlot = -1;   // BARU: -1 = belum ada mesin dipilih
-static int currentRegime = 0;   // BARU (20 Agustus 2026): kondisi operasi DALAM mesin yang
-                                 // sama (0=default, misal 1=pulley besar, 2=tanpa beban, dst).
-                                 // Beda sama currentMachineSlot -- itu identitas MESIN,
-                                 // ini identitas KONDISI OPERASI mesin itu. Lihat diskusi
-                                 // soal kenapa 1 baseline gak cukup buat semua kondisi
-                                 // operasi (pulley kecil/besar/tanpa beban getarannya beda).
+static int currentMachineSlot = 0;   // BARU: -1 = belum ada mesin dipilih
+static int currentRegime = 0;  
 void setup() {
     TinyML_Init();
     setDiagnosisBandBaseline(bandBaselineMean, bandBaselineStd);
@@ -66,41 +62,49 @@ void setup() {
     Serial.begin(115200);
     delay(2000);
     Serial.println(F("[SYSTEM] Booting Clean Modular Sensor Core..."));
+
     xTaskCreatePinnedToCore(TaskDriverINM, "Task_INM", STACK_TASK_INM, NULL, PRIO_TASK_INM, NULL, CORE_DSP_HIGH_SPEED);
     Scheduler_InitTasks();
+
     xTaskCreatePinnedToCore(TaskDriverGetaran, "Task_Vib", 3072, NULL, PRIO_TASK_VIB, NULL, CORE_DSP_HIGH_SPEED);
     #if ENABLE_ARUS_SENSOR
-        xTaskCreatePinnedToCore(
-            TaskDriverArus, "Task_Arus", STACK_TASK_ARUS, NULL,
-            PRIO_TASK_ARUS, NULL, CORE_DSP_HIGH_SPEED
-        );
+        xTaskCreatePinnedToCore(TaskDriverArus, "Task_Arus", STACK_TASK_ARUS, NULL, PRIO_TASK_ARUS, NULL, CORE_DSP_HIGH_SPEED);
     #endif
+
     xTaskCreatePinnedToCore(TaskDriverSuhu, "Task_Suhu", STACK_TASK_SUHU, NULL, PRIO_TASK_SUHU, NULL, CORE_SYSTEM_SLOW_IO);
- 
+
     bootMillis = millis();
-    startCalibrationPhase();
-    calibrationStartMillis = millis();
-    Serial.println(F("[SYSTEM] Boot Complete. Memulai fase kalibrasi self-baseline (180 detik nyata)."));
+
+    // BARU (27 Agustus 2026): Inisialisasi baseline saat boot berdasarkan Slot 0 Regime 0
+    // Logika:
+    //   Jika Slot 0 Regime 0 punya preset pabrikan → load preset, skip kalibrasi
+    //   Jika Slot 0 Regime 0 punya baseline di flash → load dari flash, skip kalibrasi
+    //   Jika tidak ada sama-sama → mulai kalibrasi 180 detik
+    // Tujuan: Device siap deteksi dari detik pertama jika Slot 0/1 sudah punya preset
+    if (isPresetLockedSlot(0, 0)) {
+        applyMachineBaseline(0, 0);  // Load preset pabrikan Mesin 1, skip kalibrasi
+    } else {
+        // Cek flash (temporary array buat cek existence saja)
+        float tempMean[3], tempSigmaInv[3][3], tempStdDev[3];
+        if (loadBaselineFromFlash(0, tempMean, tempSigmaInv, tempStdDev, 0)) {
+            applyMachineBaseline(0, 0);  // Preset tidak ada, tapi flash ada → load dari flash
+        } else {
+            // Tidak ada preset, tidak ada di flash → kalibrasi dari awal
+            startCalibrationPhase();
+            calibrationStartMillis = millis();
+            Serial.println(F("[SYSTEM] Belum ada baseline untuk Slot 0 Regime 0. Memulai fase kalibrasi self-baseline (180 detik nyata)."));
+        }
+    }
+
+    Serial.println(F("[SYSTEM] Boot Complete."));
 
 }
-// BARU (20 Agustus 2026): logika "coba muat baseline, kalau gak ada mulai
-// kalibrasi" dipindah ke sini, dipisah dari selectMachineBaselineSlot(),
-// supaya bisa dipakai ULANG dari 2 tempat -- pas GANTI MESIN (slot beda)
-// ATAU pas GANTI KONDISI OPERASI (regime beda) pada mesin yang SAMA.
-// Sebelumnya cuma ada 1 pemicu (ganti slot); sekarang ada 2 pemicu yang
-// butuh perilaku identik, jadi logikanya disatukan di sini biar gak ada
-// 2 salinan kode yang bisa kelupaan disinkronkan kalau nanti diubah lagi.
-// BARU (20 Agustus 2026): cetak 1 hasil kalibrasi (mean/sigmaInv/stdDev +
-// baseline band getaran & audio) sebagai kode C++ siap-copas ke
-// FactoryPresets.h. INI CUMA NGE-PRINT -- gak nyimpen/pakai apa-apa
-// otomatis. Asumsi AUDIO_BAND_COUNT == 3 (nilai sekarang di config.h);
-// kalau itu berubah nanti, baris audioMean/audioStd di bawah perlu
-// disesuaikan jumlah %.6ff-nya.
+
 static void printFactoryPresetExport(int slot, int regime, float mean[3], float sigmaInv[3][3], float stdDev[3],
                                       float bandMean[4], float bandStd[4],
                                       float audioMean[AUDIO_BAND_COUNT], float audioStd[AUDIO_BAND_COUNT]) {
     Serial.println(F("\n[EXPORT PRESET] Kalau kalibrasi ini BERSIH (motor sudah stabil sebelum mulai),"));
-    Serial.println(F("[EXPORT PRESET] copas blok di bawah ke FactoryPresets.h:"));
+    Serial.println(F("[EXPORT PRESET] data untuk dimasukan ke ke FactoryPresets.h:"));
     Serial.printf("// ---- Export slot #%d regime #%d ----\n", slot, regime);
     Serial.printf("static float preset_mean[3] = {%.6ff, %.6ff, %.6ff};\n", mean[0], mean[1], mean[2]);
     Serial.printf("static float preset_sigmaInv[3][3] = {{%.6ff,%.6ff,%.6ff},{%.6ff,%.6ff,%.6ff},{%.6ff,%.6ff,%.6ff}};\n",
@@ -115,21 +119,6 @@ static void printFactoryPresetExport(int slot, int regime, float mean[3], float 
     Serial.println(F("[EXPORT PRESET] Selesai.\n"));
 }
 
-// FIX (25 Agustus 2026): dulu urutan pengecekannya FLASH DULU baru preset --
-// jadi begitu slot 0/1 PERNAH dikalibrasi sekali aja lewat 'R' (walau cuma
-// 1 sesi 180 detik yang belum tentu bersih), hasilnya kesimpen ke flash dan
-// SELAMANYA mengalahkan preset pabrikan yang sudah kita susun hati-hati
-// (multi-sesi + margin aman tervalidasi) di FactoryPresets.h -- preset itu
-// jadi kayak "mati suri", nggak pernah kepakai lagi tanpa kita sadar.
-// Sekarang dibalik: preset pabrikan (kalau sudah READY) itu SUMBER
-// KEBENARAN TUNGGAL buat slot yang sudah "dikenal" -- gak bisa ditimpa
-// diam-diam lewat kalibrasi cepat. Satu-satunya cara update preset slot
-// ini adalah EDIT MANUAL FactoryPresets.h + reflash -- itu SENGAJA, biar
-// setiap perubahan baseline motor yang sudah dikenal melalui review
-// manusia dulu (cek apakah kalibrasinya bersih), bukan otomatis dipercaya
-// begitu saja. Slot yang BELUM py preset (3-9) tetap bebas kalibrasi
-// hidup seperti biasa -- fungsi ini dipakai juga di serial command handler
-// 'R'/'Z' supaya keduanya konsisten.
 bool isPresetLockedSlot(int slot, int regime) {
     if (slot == 0 && regime == 0 && FACTORY_PRESET_MESIN1_READY) return true;
     if (slot == 0 && regime == 1 && FACTORY_PRESET_MESIN1_REGIME1_READY) return true;
@@ -140,12 +129,6 @@ bool isPresetLockedSlot(int slot, int regime) {
 
 static void applyMachineBaseline(int slot, int regime) {
     float mean[3], sigmaInv[3][3], stdDev[3];
-    // FIX (25 Agustus 2026): preset dicek DULUAN sekarang, SEBELUM flash --
-    // lihat komentar panjang di isPresetLockedSlot() di atas. Ini SATU
-    // rantai if/else-if/else (bukan 2 blok terpisah) supaya cuma SATU
-    // cabang yang jalan tiap kali fungsi ini dipanggil -- versi sebelumnya
-    // sempat kepecah jadi 2 blok independen yang salah (flash yang baru
-    // aja dimuat bisa langsung ketimpa lagi sama cabang else terakhir).
     if (slot == 0 && regime == 0 && FACTORY_PRESET_MESIN1_READY) {
         setFeatureStdDev(presetMesin1_stdDev);
         initializeBaselineLearner(presetMesin1_mean, presetMesin1_stdDev, presetMesin1_sigmaInv);
@@ -153,11 +136,6 @@ static void applyMachineBaseline(int slot, int regime) {
         setAudioBandBaseline(presetMesin1_audioMean, presetMesin1_audioStd);
         Serial.println(F("[SYSTEM] Preset pabrikan Mesin 1 dimuat -- deteksi langsung aktif TANPA kalibrasi."));
     }
-    // BARU (20 Agustus 2026): sama seperti blok Mesin 1 regime 0 di atas,
-    // tapi buat regime 1 (pulley kecil) -- supaya pulley kecil juga
-    // "gak perlu kalibrasi lagi" walau flash-nya kehapus (erase all) atau
-    // baseline-nya dipakai di unit ESP32 lain. Kalau nanti nambah preset
-    // buat regime lain (2, 3, dst), tinggal copas pola else-if ini.
     else if (slot == 0 && regime == 1 && FACTORY_PRESET_MESIN1_REGIME1_READY) {
         setFeatureStdDev(presetMesin1Regime1_stdDev);
         initializeBaselineLearner(presetMesin1Regime1_mean, presetMesin1Regime1_stdDev, presetMesin1Regime1_sigmaInv);
@@ -212,32 +190,9 @@ void selectMachineBaselineSlot(int slot) {
     currentMachineSlot = slot;
     applyMachineBaseline(currentMachineSlot, currentRegime);
 
-    // FIX (21 Agustus 2026): sebelumnya ganti SLOT (mesin mana) dan ganti
-    // KLASTER BEARING (geometri yang dipakai hitung BPFO/BPFI) itu 2 command
-    // TERPISAH ('0'-'9' vs 'V'/'W') yang HARUS SAMA-SAMA diingat dikirim
-    // manual tiap pindah motor uji. Terbukti gampang kelewat di lapangan --
-    // sudah kejadian slot dipindah tapi klaster kelupaan, bikin band
-    // BPFO/BPFI ngecek frekuensi bearing yang salah motor. Solusi kemarin
-    // (nyuruh kamu inget urutan tombolnya) itu SALAH ARAH -- itu nyuruh
-    // manusia jadi lebih teliti, bukan bikin sistemnya susah salah.
-    // Sekarang klaster IKUT OTOMATIS sesuai slot: di setup kalian saat ini
-    // slot dan klaster memang SELALU berpasangan 1-ke-1 (slot 0 = Mesin 1 =
-    // Klaster 1/6203, slot 1 = Mesin 2 = Klaster 2/6201), jadi nomor slot
-    // bisa langsung dipakai sebagai nomor klaster. setBearingCluster() di
-    // FFTProcessor.cpp sendiri sudah punya pengecekan batas (slot di luar
-    // 0-1 cuma di-print error, gak ubah apa-apa), jadi aman dipanggil apa
-    // adanya di sini. Kalau nanti nambah mesin ke-3 dengan bearing lain:
-    // tambah entry baru di BEARING_TABLE (SharedTypes.h) index ke-2, baris
-    // ini otomatis ikut kepakai tanpa perlu diubah lagi. Menu 7 (Bearing/
-    // Klaster) di loggerserial.py TETAP ada buat override manual (misal mau
-    // eksperimen coba klaster lain di mesin yang sama), tapi sekarang itu
-    // OPSIONAL -- bukan langkah wajib tiap ganti slot lagi.
     setBearingCluster(slot);
 }
 
-// BARU: sama kayak selectMachineBaselineSlot(), tapi buat ganti KONDISI
-// OPERASI pada mesin yang SAMA (mesinnya gak berubah). Dipicu dari command
-// serial huruf kecil 'a'-'j' (lihat loop() di bawah).
 void selectRegime(int regime) {
     if (regime == currentRegime) return;   // udah di regime ini, gak perlu ngapa-ngapain
     currentRegime = regime;

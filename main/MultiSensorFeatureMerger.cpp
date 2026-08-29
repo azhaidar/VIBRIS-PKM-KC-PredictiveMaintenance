@@ -48,6 +48,27 @@ void updateAudioFeature(float rmsValue) {
     writeFeature(FEAT_AUDIO, rmsValue);
 }
 
+// BARU (26 Agustus 2026): Simpan audio RMS dalam dB juga (terpisah dari RMS voltage)
+static volatile float latestAudio_dB = 0.0f;
+
+void updateAudioFeatureDB(float audio_dB) {
+    ensureMutexInitialized();
+    if (xSemaphoreTake(mergerMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        latestAudio_dB = audio_dB;
+        xSemaphoreGive(mergerMutex);
+    }
+}
+
+float getLatestAudio_dB() {
+    float value = 0.0f;
+    ensureMutexInitialized();
+    if (xSemaphoreTake(mergerMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        value = latestAudio_dB;
+        xSemaphoreGive(mergerMutex);
+    }
+    return value;
+}
+
 // void updateCurrentFeature(float rmsValue) {
 //     (void)rmsValue;  // Sensor arus nonaktif sementara (lihat ENABLE_ARUS_SENSOR di config.h).
 //                       // Tidak lagi ditulis ke vektor fitur Mahalanobis (sekarang 3 dimensi).
@@ -172,6 +193,7 @@ bool getMergedFeatures(SensorFeatures *output) {
 
     output->rms_getaran = latestFeatures[FEAT_VIBRATION];
     output->rms_suara   = latestFeatures[FEAT_AUDIO];
+    output->rms_suara_db = latestAudio_dB;  // BARU (26 Agustus 2026): copy audio dB juga
     output->arus        = 0.0f;
     output->suhu        = latestFeatures[FEAT_TEMP];
     output->kurtosis    = latestFeatures[FEAT_KURTOSIS];

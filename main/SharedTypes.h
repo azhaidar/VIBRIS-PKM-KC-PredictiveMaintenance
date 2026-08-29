@@ -27,8 +27,9 @@ struct AudioBuffer {
 // 2. WADAH FITUR SENSOR (FEATURE EXTRACTION - INTER-CORE DATA PASSING)
 // ===================================================================
 struct SensorFeatures {
-    volatile float rms_getaran; // Hasil kalkulasi Root Mean Square dari LIS3DH [cite: 2026-05-06]
-    volatile float rms_suara;   // Hasil konversi amplitudo/daya dari INMP441 [cite: 2026-05-06]
+    volatile float rms_getaran; 
+    volatile float rms_suara;   
+    volatile float rms_suara_db; // BARU (26 Agustus 2026): Audio RMS dalam dB (relative to 10mV noise floor)
     volatile float arus;        // Hasil kalkulasi RMS dari sensor SCT [cite: 2026-04-10]
     volatile float suhu;        // Hasil pembacaan dari sensor suhu DS18H [cite: 2026-04-10]
     volatile bool valid;        // Flag integritas data untuk error handling / fail-safe mechanism

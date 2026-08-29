@@ -38,8 +38,10 @@ colorama_init(autoreset=True)
 # ======================= KONFIGURASI =======================
 SERIAL_PORT = "COM3"      # GANTI sesuai port ESP32 kamu
 BAUD_RATE = 115200
-REKAM_DURASI_MENIT = 4    # BARU: auto-stop flat, ganti angka ini kalau mau beda
-DATASET_DIR = "Dataset"   # BARU: semua file CSV/txt hasil logging disimpan di sini
+REKAM_DURASI_MENIT = 3.1    # BARU: auto-stop flat, ganti angka ini kalau mau beda
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASET_DIR = os.path.join(BASE_DIR, "Dataset")
+#DATASET_DIR = "Dataset"   # BARU: semua file CSV/txt hasil logging disimpan di sini
 SYSTEM_LOG_FILE = os.path.join(DATASET_DIR, "vibris_system_log.txt")   # BARU: nampung semua baris BUKAN JSON, biar gak hilang
 _timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 _kondisi_aktif = "belumDipilih"
@@ -68,22 +70,32 @@ def _bangun_nama_file():
     global OUTPUT_CSV, SUMMARY_LOG_FILE
     os.makedirs(DATASET_DIR, exist_ok=True)   # BARU: bikin folder Dataset kalau belum ada
     label_slot = _label_slot(_slot_aktif)
-    OUTPUT_CSV = os.path.join(DATASET_DIR, f"vibris_{_timestamp}_{label_slot}_{_kondisi_aktif}.csv")
-    SUMMARY_LOG_FILE = os.path.join(DATASET_DIR, f"vibris_{_timestamp}_{label_slot}_{_kondisi_aktif}_ringkasan_sesi.txt")
+    OUTPUT_CSV = os.path.join(DATASET_DIR, f"vibris_{label_slot}_{_kondisi_aktif}_{_timestamp}.csv")
+    SUMMARY_LOG_FILE = os.path.join(DATASET_DIR, f"vibris_{label_slot}_{_timestamp}_{_kondisi_aktif}_ringkasan_sesi.txt")
 
 
 _bangun_nama_file()
 
 KOLOM = [
-    "waktu_lokal", "rms_v", "rms_x", "rms_y", "rms_z", "rms_a",
-    "cur", "cur_raw_adc", "temp", "temp_raw", "rpm", "snr", "d2",
+    "waktu_lokal", "rms_v", "rms_x", "rms_y", "rms_z", "rms_a", "audio_rms_db",
+    "cur", "cur_raw_adc", "temp", "temp_raw", "temp_rate"
+    , "rpm", "snr", "d2",
     "status", "e_unbalance", "e_misalign", "e_bpfo", "e_bpfi",
     "diagnosis", "diag_conf",
     "e_audio_low", "e_audio_mid", "e_audio_high",
     "audio_diagnosis", "audio_diag_conf",
     "ml_label", "ml_conf",
     "roughness", "brightness",
-    "ground_truth"
+    "top_freqs", "top_amps",
+    "fft_peak_bins", "fft_freq_res",
+    "ground_truth",
+    # BARU (28 Agustus 2026): Huber clipping detail
+    "time_ms_debug", "d2_raw", "d2_clipped", "delta",
+    "vib_zscore_raw", "vib_zscore_clipped",
+    "audio_zscore_raw", "audio_zscore_clipped",
+    "temp_zscore_raw", "temp_zscore_clipped",
+    "baseline_mean_vib", "baseline_mean_audio", "baseline_mean_temp",
+    "baseline_std_vib", "baseline_std_audio", "baseline_std_temp"
 ]
 
 # ===================================================================
@@ -501,6 +513,121 @@ def siapkan_file_csv(path):
         writer.writerow(KOLOM)
     return f, writer
 
+def parse_debug_d2_line(baris_teks):
+    """Parse [DEBUG_D2] line dan extract CSV part, atau None jika parsing gagal"""
+    if not baris_teks.startswith("[DEBUG_D2]"):
+        return None
+
+    # Format: [DEBUG_D2] T=157 | D2: ... | CSV:157,643.788,31.070,...
+    try:
+        # Cari "CSV:" part
+        if "CSV:" not in baris_teks:
+            return None
+
+        csv_start = baris_teks.index("CSV:") + 4
+        csv_part = baris_teks[csv_start:]
+        values = csv_part.split(",")
+
+        if len(values) < 10:
+            return None
+
+        return {
+            "time_ms": values[0],
+            "d2_raw": values[1],
+            "d2_clipped": values[2],
+            "delta": values[3],
+            "vib_zscore_raw": values[4],
+            "vib_zscore_clipped": values[5],
+            "audio_zscore_raw": values[6],
+            "audio_zscore_clipped": values[7],
+            "temp_zscore_raw": values[8],
+            "temp_zscore_clipped": values[9],
+        }
+    except (ValueError, IndexError):
+        return None
+
+def parse_baseline_line(baris_teks):
+    """Parse [BASELINE] line dan return dict dengan mean & std, atau None jika gagal"""
+    if not baris_teks.startswith("[BASELINE]"):
+        return None
+
+    # Format: [BASELINE] mean=x.x,y.y,z.z | std=a.a,b.b,c.c
+    try:
+        # Buang "[BASELINE] " prefix
+        content = baris_teks[len("[BASELINE] "):]
+
+        # Split by " | " untuk pisahkan mean dan std
+        parts = content.split(" | ")
+        if len(parts) != 2:
+            return None
+
+        mean_part = parts[0]  # "mean=x.x,y.y,z.z"
+        std_part = parts[1]   # "std=a.a,b.b,c.c"
+
+        # Extract nilai mean
+        if not mean_part.startswith("mean="):
+            return None
+        mean_str = mean_part[5:]  # buang "mean="
+        means = mean_str.split(",")
+
+        # Extract nilai std
+        if not std_part.startswith("std="):
+            return None
+        std_str = std_part[4:]  # buang "std="
+        stds = std_str.split(",")
+
+        if len(means) != 3 or len(stds) != 3:
+            return None
+
+        return {
+            "mean_vib": means[0],
+            "mean_audio": means[1],
+            "mean_temp": means[2],
+            "std_vib": stds[0],
+            "std_audio": stds[1],
+            "std_temp": stds[2],
+        }
+    except (ValueError, IndexError):
+        return None
+
+
+def pop_matching_debug_data(debug_buffer, current_time):
+    """
+    BARU (28 Agustus 18:20): Extract [DEBUG_D2] data dari buffer yang sesuai dengan
+    waktu JSON tiba.
+
+    Strategi: karena JSON tiba ~200ms dan [DEBUG_D2] tiba ~100ms, seharusnya ada
+    2 [DEBUG_D2] untuk setiap JSON. Kami ambil yang PALING BARU sebelum JSON tiba.
+
+    Args:
+        debug_buffer: list of dicts dengan key _python_timestamp
+        current_time: time.time() saat JSON tiba
+
+    Returns:
+        dict dengan D2 data (time_ms, d2_raw, d2_clipped, dll), atau dict kosong jika buffer kosong
+    """
+    if not debug_buffer:
+        return {}
+
+    # Cari yang paling dekat dengan current_time (tapi tidak boleh LEBIH BARU dari current_time)
+    # Ini buat menghindari "data masa depan"
+    candidates = [d for d in debug_buffer if d.get("_python_timestamp", float('inf')) <= current_time]
+
+    if not candidates:
+        # Kalau semua masih "masa depan" (timing racing), ambil yang paling lama di buffer
+        candidates = [debug_buffer[0]]
+
+    # Ambil yang paling baru dari candidates
+    best = max(candidates, key=lambda x: x.get("_python_timestamp", 0))
+
+    # Hapus semua [DEBUG_D2] yang LAMA (sebelum best) dari buffer -- sudah dipakai
+    best_idx = debug_buffer.index(best)
+    debug_buffer[:best_idx + 1] = []  # Bersihkan yang sudah dipakai + best itu sendiri
+
+    # Return data tanpa _python_timestamp (cleanup internal field)
+    result = {k: v for k, v in best.items() if k != "_python_timestamp"}
+    return result
+
 
 def tulis_ringkasan_sesi(data, cetak=True):
     waktu = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -630,6 +757,15 @@ def main():
     csv_file, csv_writer = siapkan_file_csv(OUTPUT_CSV)
     current_csv_path = OUTPUT_CSV   # BARU: buat deteksi kalau nama file berubah
 
+    # BARU (28 Agustus 2026): simpan baseline terbaru untuk digabung ke row CSV utama
+    latest_baseline = {}  # dict dengan key: time_ms, d2_raw, d2_clipped, delta, zscore_raw/clipped, baseline_mean/std
+
+    # UBAH (28 Agustus 18:20): ganti dari latest_baseline single-value ke debug_buffer queue
+    # Ini buat sync timing antara [DEBUG_D2] (100ms cycle) dan JSON (200ms cycle).
+    # Alih-alih menyimpan SATU nilai terakhir (yang jadi sama di 2+ baris JSON),
+    # kami buffer SEMUA [DEBUG_D2], konsumsi FIFO + lookup waktu saat JSON tiba.
+    debug_buffer = []  # List of dicts: [{time_ms, d2_raw, ..., _python_timestamp}, ...]
+
     stop_event = threading.Event()
     t_menu = threading.Thread(target=thread_menu, args=(ser, state, stop_event), daemon=True)
     t_menu.start()
@@ -668,6 +804,31 @@ def main():
                 continue
 
             if not raw_line:
+                continue
+
+            # BARU (28 Agustus 2026): handle [DEBUG_D2] lines — buffer data untuk matching ke JSON row yang sesuai
+            if raw_line.startswith("[DEBUG_D2]"):
+                # Parse Huber clipping detail dari CSV part
+                debug_data = parse_debug_d2_line(raw_line)
+                if debug_data:
+                    # UBAH: simpan ke queue/buffer dengan timestamp lokal saat data tiba
+                    debug_data["_python_timestamp"] = time.time()  # Catat waktu kedatangan di Python
+                    debug_buffer.append(debug_data)
+                # Tampilkan di terminal (warna cyan untuk debug)
+                if not menu_terbuka.is_set():
+                    print(f"{Fore.CYAN}{raw_line}{Style.RESET_ALL}")
+                continue
+
+            if raw_line.startswith("[BASELINE]"):
+                # Parse baseline info
+                baseline_data = parse_baseline_line(raw_line)
+                if baseline_data:
+                    latest_baseline = baseline_data  # simpan untuk siklus debug D2 berikutnya
+                # Tampilkan juga di terminal (warna magenta untuk baseline)
+                if not menu_terbuka.is_set():
+                    print(f"{Fore.MAGENTA}[BL] {raw_line}{Style.RESET_ALL}")
+                with open(SYSTEM_LOG_FILE, "a", encoding="utf-8") as f:
+                    f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {raw_line}\n")
                 continue
 
             if raw_line.startswith("{"):
@@ -712,11 +873,20 @@ def main():
                 print(f"{Fore.GREEN}[LOGGER] Beralih menulis ke file: {OUTPUT_CSV}{Style.RESET_ALL}")
 
             waktu = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # UBAH (28 Agustus 18:20): extract Huber data yang sesuai dari buffer, bukan latest_baseline
+            current_time = time.time()
+            huber_data = pop_matching_debug_data(debug_buffer, current_time)
+
+            # Merge dengan baseline info jika ada (dari [BASELINE] line terakhir)
+            if latest_baseline:
+                huber_data.update({k: v for k, v in latest_baseline.items() if k.startswith("mean_") or k.startswith("std_")})
+
             baris = [
                 waktu,
                 data.get("rms_v"), data.get("rms_x"), data.get("rms_y"), data.get("rms_z"),
-                data.get("rms_a"), data.get("cur"), data.get("cur_raw_adc"),
-                data.get("temp"), data.get("temp_raw"), data.get("rpm"), data.get("snr"),
+                data.get("rms_a"),data.get("rms_suara_db"), data.get("cur"), data.get("cur_raw_adc"),
+                data.get("temp"), data.get("temp_raw"), data.get("temp_rate"), data.get("rpm"), data.get("snr"),
                 data.get("d2"), data.get("status"),
                 data.get("e_unbalance"), data.get("e_misalign"),
                 data.get("e_bpfo"), data.get("e_bpfi"),
@@ -725,7 +895,26 @@ def main():
                 data.get("audio_diagnosis"), data.get("audio_diag_conf"),
                 data.get("ml_label"), data.get("ml_conf"),
                 data.get("roughness"), data.get("brightness"),
+                data.get("top_freqs"), data.get("top_amps"),
+                data.get("fft_peak_bins"), data.get("fft_freq_res"),
                 data.get("ground_truth"),
+                # UBAH (28 Agustus 18:20): Huber clipping detail (dari huber_data yang dipop dari buffer)
+                huber_data.get("time_ms", ""),
+                huber_data.get("d2_raw", ""),
+                huber_data.get("d2_clipped", ""),
+                huber_data.get("delta", ""),
+                huber_data.get("vib_zscore_raw", ""),
+                huber_data.get("vib_zscore_clipped", ""),
+                huber_data.get("audio_zscore_raw", ""),
+                huber_data.get("audio_zscore_clipped", ""),
+                huber_data.get("temp_zscore_raw", ""),
+                huber_data.get("temp_zscore_clipped", ""),
+                huber_data.get("mean_vib", ""),
+                huber_data.get("mean_audio", ""),
+                huber_data.get("mean_temp", ""),
+                huber_data.get("std_vib", ""),
+                huber_data.get("std_audio", ""),
+                huber_data.get("std_temp", ""),
             ]
 
             csv_writer.writerow(baris)
@@ -749,6 +938,7 @@ def main():
             pass
         print(f"[LOGGER] Selesai. Total {baris_masuk} baris data tersimpan di {OUTPUT_CSV}")
         print(f"[LOGGER] Ringkasan sesi cek (jika ada) tersimpan di {SUMMARY_LOG_FILE}")
+        print(f"[LOGGER] CSV mencakup semua data sensor + Huber clipping detail")
 
 
 if __name__ == "__main__":

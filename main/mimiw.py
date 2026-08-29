@@ -1,3 +1,8 @@
+# ==============================================================================
+# VIBRIS INDUSTRIAL HMI - 1800+ LINES ENTERPRISE ENGINE (PERSISTENT SLOT STORAGE)
+# Pembaruan: Riwayat Slot Mesin & Kalibrasi Disimpan Otomatis ke Berkas Lokal
+# ==============================================================================
+
 import sys
 import os
 import csv
@@ -28,6 +33,7 @@ from PyQt5.QtCore import QTimer, Qt, QPoint, QEvent
 from PyQt5.QtGui import QFont, QPainter, QLinearGradient, QColor, QPolygon, QPen, QBrush
 import pyqtgraph as pg
 
+# ===================== KONFIGURASI OPERASIONAL =====================
 SERIAL_PORT = '/dev/ttyACM0'
 BAUD_RATE = 115200
 LOG_DIR = "logs"
@@ -38,6 +44,12 @@ if not os.path.exists(LOG_DIR):
 
 ESP32_USB_HINTS = ["CH340", "CH343", "CP210", "USB-SERIAL", "USB SERIAL", "FTDI", "SILICON LABS", "COM3", "ACM0"]
 
+# BARU (25 Agustus 2026): fitur "Simpan ke Dataset" di halaman Recording
+# (Mode Engineer) -- supaya file CSV/TXT yang dihasilkan dashboard ini
+# SAMA PERSIS format & lokasinya dengan loggerserial.py (folder, nama file,
+# urutan kolom), berikut disalin APA ADANYA dari loggerserial.py. Kalau
+# nanti loggerserial.py diubah formatnya, ubah juga yang di sini biar
+# tetap nyambung/bisa dibuka bareng di 1 folder Dataset yang sama.
 DATASET_DIR = "Dataset"
 KOLOM_DATASET = [
     "waktu_lokal", "rms_v", "rms_x", "rms_y", "rms_z", "rms_a",
@@ -50,6 +62,7 @@ KOLOM_DATASET = [
     "roughness", "brightness",
     "ground_truth"
 ]
+# Sama persis dengan MENU_KONDISI di loggerserial.py: (huruf_command, label_nama_file)
 KONDISI_REKAM_OPSI = [
     ("O", "kondisiNormal"),
     ("U", "kondisiUnbalance"),
@@ -58,6 +71,7 @@ KONDISI_REKAM_OPSI = [
     ("L", "kondisiLubrication"),
     ("D", "kondisiMati"),
 ]
+# Sama persis dengan SLOT_LABEL_UNTUK_NAMA_FILE di loggerserial.py
 SLOT_LABEL_UNTUK_NAMA_FILE = {
     0: "slot0_1400rpm",
     1: "slot1_2800rpm",
@@ -65,6 +79,7 @@ SLOT_LABEL_UNTUK_NAMA_FILE = {
 if not os.path.exists(DATASET_DIR):
     os.makedirs(DATASET_DIR)
 
+# ===================== PALET WARNA INDUSTRI VIBRIS =====================
 COL_BG_MAIN = "#181b20"
 COL_PANEL_DARK = "#101216"
 COL_ACCENT = "#38bdf8"
@@ -77,28 +92,23 @@ COL_BAD = "#f87171"
 COL_IDLE = "#94a3b8"
 COL_HEADER_BG = "#1c2027"
 
+# FIX (25 Agustus 2026): angka ini dulu 9.49/13.28 -- gak sama sama ambang
+# batas ASLI yang dipakai firmware buat mutusin Normal/Waspada/Bahaya
+# (MahalanobisDetector.cpp: chi-square 95%/99% buat 3 fitur = 7.815/11.345).
+# Garis putus-putus di grafik D2 jadi nunjuk di tempat yang salah -- warna
+# titik data (dari status asli ESP32) bisa berubah Bahaya padahal garis
+# putus-putusnya belum kelewat, bikin bingung siapapun yang baca grafiknya.
 D2_THRESHOLD_WASPADA = 7.815
 D2_THRESHOLD_BAHAYA = 11.345
 
 STATUS_SEVERITY = {"diam": -1, "normal": 0, "waspada": 1, "bahaya": 2}
 
-JENIS_MESIN_OPSI = [
-    ("🌀", "Kipas Angin", "Mensirkulasikan/mendinginkan udara di ruangan atau area kerja."),
-    ("💧", "Pompa Air", "Memompa air dari satu tempat ke tempat lain (misal: dari sumur/sumber ke tandon penyimpanan)."),
-    ("🥤", "Blender", "Menghaluskan atau mencampur bahan makanan/minuman."),
-    ("🧹", "Vacuum Cleaner", "Menyedot debu dan kotoran dari lantai atau permukaan lainnya."),
-    ("🛠️", "Bor Listrik", "Melubangi atau mengencangkan material pada pekerjaan bengkel/konstruksi."),
-    ("🧵", "Mesin Jahit", "Menjahit kain untuk produksi pakaian atau kerajinan tekstil."),
-    ("🌬️", "Blower / Exhaust Fan", "Meniupkan/menghisap udara untuk proses industri (misal: sirkulasi udara, pengering, atau tungku UMKM)."),
-    ("📦", "Motor Konveyor", "Menggerakkan sabuk konveyor untuk memindahkan barang pada proses produksi."),
-    ("⚙️", "Mesin/Motor Rotasi Lainnya", "Mesin rotasi umum yang belum masuk kategori spesifik di atas."),
-]
-
+# ===================== MODAL FORM TAMBAH SLOT =====================
 class AddMachineDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Tambah Slot Mesin & Protokol Hardware")
-        self.setFixedSize(300, 235) 
+        self.setFixedSize(300, 270)
         self.setStyleSheet(f"background-color: {COL_BG_MAIN}; color: {COL_TEXT_LIGHT}; font-family: Arial; font-size: 8px;")
 
         layout = QVBoxLayout(self)
@@ -112,10 +122,10 @@ class AddMachineDialog(QDialog):
         form_layout = QFormLayout()
         form_layout.setSpacing(4)
 
-        self.cmb_jenis = QComboBox()
-        self.cmb_jenis.addItems([f"{icon}  {label}" for icon, label, _kegunaan in JENIS_MESIN_OPSI])
-        self.cmb_jenis.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: {COL_TEXT_LIGHT};")
-        form_layout.addRow("Jenis Mesin:", self.cmb_jenis)
+        self.txt_name = QLineEdit()
+        self.txt_name.setPlaceholderText("Contoh: Konveyor Utama")
+        self.txt_name.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: {COL_TEXT_LIGHT}; border: 1px solid {COL_TEXT_DIM}; padding: 2px;")
+        form_layout.addRow("Nama Mesin:", self.txt_name)
 
         self.cmb_slot = QComboBox()
         self.cmb_slot.addItems([str(i) for i in range(10)])
@@ -137,6 +147,15 @@ class AddMachineDialog(QDialog):
         self.cmb_calibration_mode.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: {COL_TEXT_LIGHT};")
         form_layout.addRow("Mode Operasi:", self.cmb_calibration_mode)
 
+        # BARU (25 Agustus 2026): deskripsi singkat "mesin ini buat apa" --
+        # dipakai di halaman Beranda Mode Awam supaya orang awam yang belum
+        # pernah nge-Cek sama sekali TETAP dapat info berguna (edukasi),
+        # bukan halaman kosong.
+        self.txt_kegunaan = QLineEdit()
+        self.txt_kegunaan.setPlaceholderText("Contoh: Memompa air dari sumur ke tandon")
+        self.txt_kegunaan.setStyleSheet(f"background-color: {COL_PANEL_DARK}; color: {COL_TEXT_LIGHT}; border: 1px solid {COL_TEXT_DIM}; padding: 2px;")
+        form_layout.addRow("Kegunaan Mesin:", self.txt_kegunaan)
+
         layout.addLayout(form_layout)
 
         btn_layout = QHBoxLayout()
@@ -154,10 +173,9 @@ class AddMachineDialog(QDialog):
 
     def get_data(self):
         is_no_calib = (self.cmb_calibration_mode.currentIndex() == 1)
-        jenis_icon, jenis_label, jenis_kegunaan = JENIS_MESIN_OPSI[self.cmb_jenis.currentIndex()]
         return {
-            "name": jenis_label,
-            "icon": jenis_icon,
+            "name": self.txt_name.text().strip() or "Mesin Baru",
+            "icon": "⚡" if is_no_calib else "🏭",
             "slot_char": self.cmb_slot.currentText(),
             "bearing_cmd": "B" if self.cmb_bearing.currentIndex() == 0 else "N",
             "cluster_cmd": "V" if self.cmb_cluster.currentIndex() == 0 else "W",
@@ -165,9 +183,10 @@ class AddMachineDialog(QDialog):
             "rpm_cluster": "Custom RPM",
             "baseline_d2": 9.49,
             "fw_cluster": "Custom",
-            "kegunaan": jenis_kegunaan,
+            "kegunaan": self.txt_kegunaan.text().strip() or "Belum ada deskripsi kegunaan mesin ini.",
         }
 
+# ===================== KOMPONEN KUSTOM GAUGE & GRAFIK =====================
 class _GaugeBar(QWidget):
     def __init__(self, min_val, max_val):
         super().__init__()
@@ -254,6 +273,7 @@ class GradientGauge(QWidget):
 
         self.lbl_status.setText(f"<span style='color:{col}; font-weight:bold;'>{status}</span>")
 
+# ===================== KELAS UTAMA DASHBOARD =====================
 class Dashboard(QWidget):
     def __init__(self):
         super().__init__()
@@ -358,14 +378,23 @@ class Dashboard(QWidget):
         self.csv_writer = None
         self.ser = None
         self.serial_connected = False
-        self.last_serial_error = ""
         self.last_raw_data = {}
 
+        # BARU (25 Agustus 2026): "Simpan ke Dataset" -- fitur TERPISAH dari
+        # Recording biasa di atas. Recording biasa (self.recording/
+        # self.csv_writer) formatnya sendiri, dipakai buat panel forensik
+        # anomali & export Excel yang SUDAH ADA -- sengaja TIDAK diubah
+        # formatnya, biar gak merusak fitur yang sudah jalan. Dataset
+        # recording ini variabel & filenya benar-benar terpisah, formatnya
+        # disamakan 100% dengan loggerserial.py (folder Dataset/, kolom
+        # KOLOM_DATASET) supaya file dari dashboard & dari loggerserial.py
+        # bisa dicampur/dibandingkan langsung tanpa perlu diubah dulu.
         self.dataset_recording = False
         self.dataset_csv_file = None
         self.dataset_csv_writer = None
         self.dataset_summary_path = None
 
+        # Memuat konfigurasi slot mesin dari penyimpanan lokal (JSON)
         self.machines = self._load_machines_config()
         self.check_history = self._load_check_history()
         self.selected_machine_idx = 0 if self.machines else -1
@@ -376,6 +405,9 @@ class Dashboard(QWidget):
         root.setContentsMargins(2, 2, 2, 2)
         root.setSpacing(2)
 
+        # =========================================================================
+        # HEADER UTAMA
+        # =========================================================================
         header = QHBoxLayout()
         header.setSpacing(2)
         header.setContentsMargins(2, 2, 2, 2)
@@ -388,6 +420,10 @@ class Dashboard(QWidget):
 
         initial_slot_str = self.machines[0]["slot_char"] if self.machines else "-"
         initial_name_str = self.machines[0]["name"] if self.machines else "- Pilih Mesin -"
+        # FIX (25 Agustus 2026): sebelumnya label header cuma nunjukin
+        # "Slot [0]" -- angka doang, gak ada nama mesinnya sama sekali.
+        # Orang yang gak hafal "slot 0 = mesin yang mana" jadi harus nebak.
+        # Sekarang nama mesinnya ikut ditampilkan.
         self.lbl_machine_active = QPushButton(f"⚙️ [{initial_slot_str}] {initial_name_str}")
         self.lbl_machine_active.setStyleSheet(
             f"QPushButton {{ background-color: {COL_ACCENT_DIM}; color: {COL_TEXT_LIGHT}; font-size: 8px; "
@@ -471,24 +507,34 @@ class Dashboard(QWidget):
         header.addLayout(time_box)
         root.addWidget(self.header_frame)
 
+        # =========================================================================
+        # STACKED WIDGET
+        # =========================================================================
         self.stack = QStackedWidget()
 
-        self.stack.addWidget(self._page_awam_beranda())        
-        self.stack.addWidget(self._page_awam_mesin_saya())     
+        # FIX (25 Agustus 2026): peta halaman Mode Awam ditata ulang total --
+        # BERANDA (nav ke-0) = "wajah alat" (index 0), MESIN SAYA (nav ke-1)
+        # = grid pilih mesin (index 1), CEK STATUS (nav ke-2) = kesimpulan
+        # hasil Cek terakhir (index 11, DIPINDAH dari index 0 lama). Riwayat
+        # (index 8), Detail Mesin (index 9), dan Proses/countdown (index 10)
+        # diakses lewat tombol di dalam halaman, bukan lewat nav bawah.
+        self.stack.addWidget(self._page_awam_beranda())        # Index 0
+        self.stack.addWidget(self._page_awam_mesin_saya())     # Index 1
 
-        self.stack.addWidget(self._page_machine_select())      
-        self.stack.addWidget(self._page_log_detail())          
-        self.stack.addWidget(self._page_raw())                 
-        self.stack.addWidget(self._page_recording())           
-        self.stack.addWidget(self._page_processed())           
-        self.stack.addWidget(self._page_summary())             
-        self.stack.addWidget(self._page_awam_riwayat())        
-        self.stack.addWidget(self._page_awam_detail_mesin())   
-        self.stack.addWidget(self._page_awam_proses())         
-        self.stack.addWidget(self._page_awam_cek_status())     
+        self.stack.addWidget(self._page_machine_select())      # Index 2
+        self.stack.addWidget(self._page_log_detail())          # Index 3
+        self.stack.addWidget(self._page_raw())                 # Index 4
+        self.stack.addWidget(self._page_recording())           # Index 5
+        self.stack.addWidget(self._page_processed())           # Index 6
+        self.stack.addWidget(self._page_summary())             # Index 7
+        self.stack.addWidget(self._page_awam_riwayat())        # Index 8 -- dari tombol "Lihat Riwayat" di Beranda
+        self.stack.addWidget(self._page_awam_detail_mesin())   # Index 9 -- dari kartu mesin di Mesin Saya
+        self.stack.addWidget(self._page_awam_proses())         # Index 10 -- countdown Cek/Kalibrasi
+        self.stack.addWidget(self._page_awam_cek_status())     # Index 11 -- tujuan nav CEK STATUS
 
         root.addWidget(self.stack, 1)
 
+        # Navigasi Bawah
         self.nav_bottom_widget = QWidget()
         nav_bottom = QHBoxLayout(self.nav_bottom_widget)
         nav_bottom.setContentsMargins(0, 0, 0, 0)
@@ -519,8 +565,17 @@ class Dashboard(QWidget):
         self._refresh_log_list()
         self.show()
 
+    # =========================================================================
+    # METODE PERSISTENSI PENYIMPANAN LOKAL (JSON)
+    # =========================================================================
     def _load_machines_config(self):
         default_machines = [
+            # FIX (25 Agustus 2026): no_calib diganti ke True buat berdua-duanya --
+            # slot 0 dan slot 1 itu MEMANG dikunci ke preset pabrikan di firmware
+            # (main.ino, isPresetLockedSlot()), jadi tombol Kalibrasi/Hapus di
+            # dashboard ini HARUS ikut keblokir juga. Sebelumnya (False) bikin
+            # dashboard "kelihatan" nawarin kalibrasi ulang padahal firmware bakal
+            # nolak diam-diam -- membingungkan, gak sinkron sama kunci beneran.
             {"name": "Blower Industri UMKM", "icon": "🌀", "slot_char": "0", "bearing_cmd": "B", "cluster_cmd": "W", "no_calib": True, "rpm_cluster": "Medium (2800 RPM)", "baseline_d2": 9.49, "fw_cluster": "Klaster B",
              "kegunaan": "Meniupkan/menghisap udara untuk proses industri (misal: sirkulasi udara, pengering, atau tungku UMKM)."},
             {"name": "Motor Induksi Pompa Air", "icon": "💧", "slot_char": "1", "bearing_cmd": "A", "cluster_cmd": "V", "no_calib": True, "rpm_cluster": "Low (1400 RPM)", "baseline_d2": 8.00, "fw_cluster": "Klaster A",
@@ -536,6 +591,16 @@ class Dashboard(QWidget):
             except Exception as e:
                 print(f"Gagal memuat konfigurasi mesin: {e}")
 
+        # FIX (25 Agustus 2026) -- BUG NYATA: file machines_config.json yang
+        # SUDAH ADA di komputer (ditulis oleh sesi lama, SEBELUM baris
+        # no_calib di atas diubah jadi True) selalu MENANG lewat "return data"
+        # di atas -- default_machines dengan no_calib=True gak pernah kepake
+        # kalau file itu sudah ada. Akibatnya slot 0 & 1 di dashboard tetap
+        # menampilkan tombol Kalibrasi Ulang aktif padahal firmware
+        # (isPresetLockedSlot() di main.ino) PASTI menolaknya diam-diam.
+        # Slot 0 dan 1 itu dikunci PERMANEN di firmware, jadi status
+        # terkuncinya harus dipaksa benar di sini juga, apapun isi file
+        # config lama -- bukan cuma berharap file-nya kebetulan sudah benar.
         healed = False
         for i in range(min(2, len(machines))):
             if not machines[i].get("no_calib", False):
@@ -554,6 +619,12 @@ class Dashboard(QWidget):
         except Exception as e:
             print(f"Gagal menyimpan konfigurasi mesin: {e}")
 
+    # BARU (25 Agustus 2026): riwayat hasil Cek disimpan terpisah dari
+    # machines_config.json (itu isinya daftar mesin, bukan histori hasil).
+    # Dipakai halaman "BERANDA" versi Mode Awam yang baru -- itu SEKARANG
+    # nampilin RIWAYAT (bukan status hidup/real-time lagi), sesuai
+    # permintaan: layar awam gak boleh nunjukkin data yang jalan sendiri,
+    # cuma nunjukkin hasil dari sesi Cek yang BENERAN sudah selesai.
     def _load_check_history(self):
         if os.path.exists(HISTORY_FILE):
             try:
@@ -626,6 +697,9 @@ class Dashboard(QWidget):
             self.btn_nav1.setText("BERANDA")
             self.btn_nav2.setText("MESIN SAYA")
             self.btn_nav3.setText("CEK STATUS")
+            # FIX (25 Agustus 2026): tombol "REBOOT ESP" DIHILANGKAN dari nav
+            # Mode Awam -- ini aksi kritikal, gak boleh gampang kepencet
+            # sama user awam. Reboot cuma bisa lewat Mode Engineer sekarang.
             self.btn_nav4.hide()
 
             self._refresh_wajah_alat()
@@ -640,6 +714,8 @@ class Dashboard(QWidget):
         self.stack.setCurrentIndex(idx)
 
     def _sesi_sedang_aktif(self):
+        # Helper kecil -- True kalau ada sesi Cek ATAU Kalibrasi (termasuk
+        # fase persiapan 4 detiknya) yang lagi berjalan sekarang.
         return (
             self.is_check_session_active
             or self.calibration_timer.isActive()
@@ -654,8 +730,29 @@ class Dashboard(QWidget):
             for i, btn in enumerate(self.menu_buttons):
                 btn.setStyleSheet(self._menu_style(i == nav_idx))
         elif self._sesi_sedang_aktif():
+            # FIX (25 Agustus 2026) -- BUG NYATA: sebelumnya nav bawah tetap
+            # membawa user ke halaman lain (Beranda/Mesin Saya/Cek Status)
+            # walau ada sesi Cek/Kalibrasi yang lagi jalan. Efeknya: user
+            # pencet Mesin Saya, lihat grid mesin seperti biasa, pencet
+            # mesin lain, dikira mau mulai Cek baru -- padahal sesi LAMA
+            # masih jalan di background, jadi malah kena warning "sedang
+            # berjalan". Sekarang: SELAMA ada sesi aktif, nav APAPUN yang
+            # dipencet langsung dibawa balik ke halaman Proses yang sedang
+            # berjalan itu -- kalau mau urus mesin lain, user harus
+            # eksplisit tekan "Batalkan" dulu di halaman itu.
             self._change_page(10)
         else:
+            # FIX (25 Agustus 2026): peran nav Mode Awam -- BERANDA = "wajah
+            # alat" (index 0), MESIN SAYA = grid pilih mesin (index 1),
+            # CEK STATUS = kesimpulan hasil Cek TERAKHIR (index 11, TIDAK
+            # lagi otomatis memicu sesi Cek baru tiap dipencet -- itu bug
+            # lama yang bikin kelihatan "nyangkut": tiap nav ini dipencet
+            # ulang selagi sesi 60 detik masih jalan, hitungannya kereset
+            # ke 60 lagi diam-diam). Sesi Cek sekarang HANYA dimulai lewat
+            # tombol "Cek Sekarang" di halaman Detail Mesin. Tombol REBOOT
+            # ESP DIHAPUS dari nav Mode Awam -- itu aksi kritikal, sengaja
+            # cuma bisa diakses dari Mode Engineer lewat tombol header yang
+            # sudah dikasih konfirmasi (_confirm_and_reboot).
             if nav_idx == 0:
                 self._refresh_wajah_alat()
                 self._change_page(0)
@@ -668,6 +765,14 @@ class Dashboard(QWidget):
                 btn.setStyleSheet(self._menu_style(i == nav_idx if nav_idx < 3 else False))
 
     def _confirm_and_reboot(self):
+        # FIX (25 Agustus 2026): sebelumnya tombol REBOOT ESP (baik yang di
+        # header maupun yang di nav bawah Mode Awam) langsung kirim command
+        # 'X' begitu dipencet, TANPA konfirmasi apapun -- padahal ini aksi
+        # paling kritikal di seluruh aplikasi (bisa motong sesi Cek/Kalibrasi
+        # yang lagi berjalan kalau kepencet gak sengaja, apalagi di tengah
+        # demo). Sekarang wajib konfirmasi dulu, dan pesannya beda kalau
+        # kebetulan ada sesi Cek/Kalibrasi yang lagi jalan, biar user sadar
+        # sesi itu bakal keputus kalau lanjut reboot.
         sedang_sibuk = (
             self.is_check_session_active
             or self.calibration_timer.isActive()
@@ -688,6 +793,14 @@ class Dashboard(QWidget):
             self._send_command('X')
 
     def _trigger_recalibration(self):
+        # FIX (25 Agustus 2026) -- BUG NYATA (crash): baris ini sebelumnya
+        # manggil self._start_3min_calibration(...), sebuah method yang TIDAK
+        # PERNAH ada di file ini sama sekali. Begitu tombol "Kalibrasi Ulang"
+        # di header Mode Engineer dipencet, Python bakal langsung crash
+        # dengan AttributeError. Yang beneran ada dan sudah teruji jalan
+        # adalah _start_delayed_calibration() -- jadi disatukan ke situ, biar
+        # Mode Engineer dan Mode Awam sama-sama lewat SATU jalur kalibrasi
+        # yang sama (gak ada dua versi yang bisa beda kelakuan).
         if self.is_check_session_active:
             QMessageBox.warning(self, "Ditolak", "Kalibrasi ditolak! Sesi check (K) sedang berjalan.")
             return
@@ -698,6 +811,13 @@ class Dashboard(QWidget):
         self._start_delayed_calibration(self.selected_machine_idx)
 
     def _trigger_check_session(self):
+        # FIX (25 Agustus 2026) -- BUG NYATA: sebelumnya fungsi ini gak pernah
+        # ngecek "apa sesi Cek yang SEKARANG udah jalan?" -- jadi kalau nav
+        # "CEK STATUS" atau tombol Cek dipencet lagi selagi sesi 60 detik
+        # masih berjalan, dia kirim ulang command 'K' dan me-restart hitungan
+        # dari 60 lagi. Ini yang bikin kerasa "nyangkut" -- padahal
+        # sebenarnya tiap pencet ulang, hitungannya direset diam-diam, jadi
+        # kelihatannya kayak gak pernah selesai-selesai.
         if self.is_check_session_active:
             QMessageBox.information(self, "Sesi Sedang Berjalan", "Sesi Cek masih berjalan, tunggu sampai selesai dulu.")
             if not self.is_technician_mode:
@@ -710,6 +830,9 @@ class Dashboard(QWidget):
         if self.is_technician_mode:
             self._start_60s_check_session()
         else:
+            # BARU (25 Agustus 2026): sebelum angka 60 detik beneran mulai
+            # jalan, kasih jeda animasi "..." singkat dulu -- biar transisi
+            # ke halaman Proses gak berasa ujug-ujug loncat.
             self._show_proses_loading("MEMPERSIAPKAN CEK", self._start_60s_check_session)
 
     def _start_60s_check_session(self):
@@ -726,6 +849,21 @@ class Dashboard(QWidget):
             self.check_session_timer.stop()
             self.is_check_session_active = False
 
+            # FIX (25 Agustus 2026): SATU-SATUNYA titik di mana ikon/teks
+            # status halaman "CEK STATUS" (dulu bernama _page_awam_beranda)
+            # boleh berubah -- persis pas sesi Cek 60 detik ini selesai,
+            # pakai nilai current_v/a/temp/status_device yang lagi ke-baca
+            # SEKARANG (bukan lagi diupdate tiap tick data masuk). Snapshot
+            # ini juga langsung dicatat ke Riwayat (self.check_history).
+            # FIX (25 Agustus 2026): emoji diganti ke yang lebih gampang
+            # dibaca sekilas oleh orang awam -- senang/aman, was-was, cemas --
+            # daripada simbol centang/kilat yang kurang jelas artinya.
+            # BARU: ditambah kasus "diam" (motor mati/gak berputar) yang
+            # SEBELUMNYA GAK PERNAH DICEK SAMA SEKALI di sini -- padahal
+            # firmware beneran bisa kirim status ini (lihat STATUS_SEVERITY
+            # di bagian atas file). Sebelumnya kalau motor lagi diam pas
+            # sesi Cek, tampilannya keliru bilang "MESIN AMAN / NORMAL"
+            # (fallback ke branch else) -- padahal seharusnya beda kondisi.
             status_key = (self.current_status_device or "").strip().lower()
             if status_key == "bahaya":
                 self.lbl_beranda_icon.setText("😨")
@@ -751,16 +889,26 @@ class Dashboard(QWidget):
             self.lbl_check_text.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {warna_status}; border: none;")
             self.lbl_check_text.setText(status_tampil)
 
+            # BARU (25 Agustus 2026): sebelumnya semua angka ditumpuk jadi
+            # satu baris teks mentah "Vib: 2.21G | Snd: 0.1dB | Temp: 33.6C"
+            # -- persis kayak nge-copy dump data teknis, orang awam gak
+            # ngerti "Vib" itu apa. Sekarang dipecah ke kotak-kotak terpisah
+            # dengan label bahasa biasa: Getaran / Suara / Suhu / Waktu.
             self.lbl_rincian_getaran.setText(f"{self.current_v:.2f} G")
             self.lbl_rincian_suara.setText(f"{self.current_a:.1f} dB")
             self.lbl_rincian_suhu.setText(f"{self.current_temp:.1f} °C")
             self.lbl_rincian_waktu.setText(datetime.now().strftime("%H:%M:%S"))
+            # BARU (25 Agustus 2026): terjemahkan diagnosis mentah firmware
+            # ("UNBALANCE"/"MISALIGNMENT"/"BEARING_BPFO"/"BEARING_BPFI"/"N/A")
+            # ke bahasa awam -- juri/operator biasa gak perlu tau istilah
+            # "BPFO"/"BPFI" itu apa. Kalau statusnya Normal atau diagnosis
+            # "N/A"/"NORMAL", tampilkan "Tidak ada" (bukan kosongin field,
+            # biar jelas itu memang belum/tidak ada masalah, bukan lupa isi).
             _peta_diagnosis_awam = {
                 "UNBALANCE":     "Ketidakseimbangan (Unbalance)",
                 "MISALIGNMENT":  "Poros Tidak Lurus (Misalignment)",
-                "BEARING_FAULT": "Kerusakan Bearing (Bearing Fault)",
-                "BEARING_BPFO":  "Kerusakan Bearing (Bearing Fault)",
-                "BEARING_BPFI":  "Kerusakan Bearing (Bearing Fault)",
+                "BEARING_BPFO":  "Bearing Aus - Outer Race (BPFO)",
+                "BEARING_BPFI":  "Bearing Aus - Inner Race (BPFI)",
                 "NORMAL":        "Tidak ada",
                 "N/A":           "Tidak ada",
             }
@@ -769,17 +917,39 @@ class Dashboard(QWidget):
             self.lbl_desc_text.setText(f"Hasil dari sesi Cek jam {datetime.now().strftime('%H:%M:%S')}")
             self.lbl_estimasi_servis.setText(f"Estimasi servis berikutnya: {self.current_servis}")
 
+            # BARU (25 Agustus 2026): begitu sesi Cek selesai, langsung
+            # arahkan ke halaman "CEK STATUS" (index 11) biar user gak perlu
+            # nebak-nebak "sudah kelar belum" -- sesuai permintaan: "setelah
+            # selesai kamu diarahkan ke cek status".
             if not self.is_technician_mode:
                 self._change_page(11)
 
             self._record_check_history(status_key or "normal", self.current_health_score)
 
+    # =========================================================================
+    # HALAMAN MODE AWAM
+    # =========================================================================
+    # FIX (25 Agustus 2026): "BERANDA" ditata ulang jadi "wajah alat" --
+    # cuma nunjukin mesin apa yang lagi aktif (ikon+nama) dan status
+    # ringkasnya, TANPA daftar riwayat panjang dan TANPA data hidup/real
+    # time. Ini murni identitas: "alat yang lagi kamu urus sekarang ini".
+    # Kesimpulan hasil Cek yang detail pindah semua ke halaman "CEK STATUS"
+    # (index 11, lihat _page_awam_cek_status di bawah). Mau lihat histori
+    # dari waktu ke waktu, ada tombol "Lihat Riwayat" di bawah yang
+    # mengarah ke halaman Riwayat (index 8).
     def _page_awam_beranda(self):
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(6)
 
+        # FIX (25 Agustus 2026): sebelumnya Beranda kosong-melompong kalau
+        # mesin belum pernah di-Cek sama sekali -- cuma ikon+nama doang,
+        # kelihatan "kurang hidup"/kurang informatif. Sekarang selalu ada
+        # 3 hal yang ditampilkan, walau BELUM PERNAH Cek sekalipun:
+        # (1) identitas mesin, (2) info dasar/edukasi (buat apa mesin ini,
+        # RPM kerja normalnya), (3) ringkasan hasil Cek TERAKHIR kalau ada.
+        # Ketiganya statis/tersimpan -- bukan data sensor hidup.
         box_top = QFrame()
         box_top.setStyleSheet(f"background-color: {COL_PANEL_DARK}; border: 1px solid #2a3542; border-radius: 6px;")
         top_lay = QVBoxLayout(box_top)
@@ -853,6 +1023,10 @@ class Dashboard(QWidget):
         return page
 
     def _refresh_wajah_alat(self):
+        # Dipanggil tiap kali slot mesin aktif berganti ATAU tiap kali
+        # sebuah sesi Cek selesai, biar halaman Beranda selalu nunjukin info
+        # yang BENERAN sesuai kondisi tersimpan sekarang -- bukan data hidup,
+        # tapi juga bukan data basi/kosong.
         if not hasattr(self, 'lbl_wajah_nama'):
             return
         if self.selected_machine_idx < 0 or self.selected_machine_idx >= len(self.machines):
@@ -870,6 +1044,8 @@ class Dashboard(QWidget):
             self.lbl_wajah_kegunaan.setText(m.get("kegunaan", "Belum ada deskripsi kegunaan mesin ini."))
             self.lbl_wajah_rpm.setText(f"Kecepatan kerja normal: {m.get('rpm_cluster', '-')}")
 
+        # Ringkasan hasil Cek TERAKHIR (kalau ada di riwayat) -- biar Beranda
+        # tetap ada isinya walau user belum buka halaman Riwayat sama sekali.
         if self.check_history:
             entry = self.check_history[-1]
             status_lower = (entry.get("status") or "").strip().lower()
@@ -882,6 +1058,10 @@ class Dashboard(QWidget):
         else:
             self.lbl_wajah_last_cek.setText("Belum pernah dicek. Buka Mesin Saya lalu tekan Cek Sekarang.")
 
+    # BARU (25 Agustus 2026): halaman RIWAYAT -- diakses lewat tombol "Lihat
+    # Riwayat" di Beranda. Isinya daftar hasil Cek yang SUDAH SELESAI dari
+    # waktu ke waktu (bukan data hidup), diambil dari self.check_history
+    # (disimpan ke check_history.json lewat _record_check_history()).
     def _page_awam_riwayat(self):
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -999,6 +1179,15 @@ class Dashboard(QWidget):
             self.awam_machine_grid.addWidget(btn, i // 2, i % 2)
 
     def _select_machine_slot(self, idx, auto_calibrate=True):
+        # FIX (25 Agustus 2026): tambah parameter auto_calibrate. Grid Mode
+        # Engineer masih manggil fungsi ini TANPA parameter (jadi tetap
+        # True, PERILAKU LAMA gak berubah -- pilih mesin yang butuh
+        # kalibrasi langsung mulai kalibrasi). Tapi menu aksi Mode Awam yang
+        # baru (halaman Detail Mesin) manggil ini dengan auto_calibrate=
+        # False dulu (cuma pindah slot & kirim command ke ESP32), BARU user
+        # pilih sendiri lewat tombol terpisah mau Cek atau Kalibrasi -- biar
+        # gak ada kalibrasi 3 menit yang keceplosan mulai cuma gara-gara
+        # user niatnya cuma mau lihat/pilih mesin.
         if self.selected_machine_idx == idx and (self.calibration_timer.isActive() or self.delay_calibration_timer.isActive()):
             return
 
@@ -1032,6 +1221,18 @@ class Dashboard(QWidget):
             self.lbl_check_text.setText(f"SLOT {m['slot_char']} DIPILIH")
             self.lbl_desc_text.setText("Belum ada baseline kalibrasi. Pilih 'Kalibrasi Ulang' di menu Mesin Saya.")
 
+    # =========================================================================
+    # HALAMAN DETAIL MESIN (Mode Awam) -- pengganti pop-up "Pilih tindakan"
+    # =========================================================================
+    # FIX (25 Agustus 2026): sebelumnya pencet kartu mesin memunculkan
+    # QMessageBox (jendela kecil bawaan Qt yang gaya visualnya beda sendiri,
+    # kelihatan "nempel" bukan bagian dari aplikasi). Diganti total jadi
+    # HALAMAN PENUH yang gayanya konsisten sama halaman lain, isinya nama +
+    # ikon mesin dan 2 tombol besar: Cek Sekarang / Kalibrasi Ulang. Kalau
+    # mesinnya slot terkunci preset pabrik (Motor 1 & 2), tombol Kalibrasi
+    # Ulang TETAP ADA supaya tata letaknya konsisten dengan mesin lain --
+    # tapi dibikin abu-abu/nonaktif, bukan disembunyikan, biar user paham
+    # itu memang sengaja dikunci, bukan tombolnya hilang/rusak.
     def _page_awam_detail_mesin(self):
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -1073,6 +1274,11 @@ class Dashboard(QWidget):
         self.btn_detail_kalib.clicked.connect(self._start_detail_kalib)
         lay.addWidget(self.btn_detail_kalib)
 
+        # BARU (25 Agustus 2026): sebelumnya Mesin Saya cuma bisa Tambah,
+        # gak ada cara HAPUS mesin dari Mode Awam sama sekali (padahal
+        # sudah ada di Mode Engineer). Tombol ini disembunyikan total kalau
+        # mesinnya slot 0/1 (preset pabrik) -- itu memang gak boleh dihapus
+        # sama sekali, di mode manapun.
         self.btn_detail_hapus = QPushButton("🗑 Hapus Mesin Ini")
         self.btn_detail_hapus.setFixedHeight(30)
         self.btn_detail_hapus.setStyleSheet(
@@ -1098,6 +1304,9 @@ class Dashboard(QWidget):
 
     def _open_machine_detail(self, idx):
         if self._sesi_sedang_aktif():
+            # Sama seperti guard di _change_page_by_nav -- selama sesi
+            # Cek/Kalibrasi masih jalan, jangan biarkan user "masuk" ke
+            # mesin lain lewat pintu manapun (termasuk kartu grid ini).
             self._change_page(10)
             return
         self.detail_machine_idx = idx
@@ -1110,6 +1319,9 @@ class Dashboard(QWidget):
         mode_str = "Preset Pabrik (Terkunci)" if terkunci else "Dengan Kalibrasi"
         self.lbl_detail_info.setText(f"Slot [{m['slot_char']}] — {mode_str}")
 
+        # Tombol Kalibrasi Ulang dibikin abu-abu/nonaktif kalau slotnya
+        # terkunci preset pabrik -- BUKAN disembunyikan -- biar user tahu
+        # kenapa gak bisa, bukan mengira tombolnya hilang/error.
         self.btn_detail_kalib.setEnabled(not terkunci)
         if terkunci:
             self.btn_detail_kalib.setText("🔒 Kalibrasi Terkunci (Preset Pabrik)")
@@ -1125,6 +1337,8 @@ class Dashboard(QWidget):
                 f"QPushButton:hover {{ background-color: #ffd166; }}"
             )
 
+        # Slot 0 & 1 = preset pabrik permanen -- gak boleh dihapus dari
+        # mode manapun, jadi tombol Hapus disembunyikan total buat mereka.
         self.btn_detail_hapus.setVisible(idx >= 2)
 
         self._change_page(9)
@@ -1172,11 +1386,28 @@ class Dashboard(QWidget):
             return
         m = self.machines[idx]
         if m.get("no_calib", False):
+            # Jaga-jaga: tombolnya sudah dibikin nonaktif di _open_machine_detail,
+            # tapi tetap dicek lagi di sini biar gak ada jalan lain buat
+            # mem-bypass kunci preset pabrik.
             QMessageBox.information(self, "Terkunci", "Slot ini pakai preset pabrik yang terkunci -- tidak bisa dikalibrasi ulang lewat dashboard maupun firmware.")
             return
         self._select_machine_slot(idx, auto_calibrate=False)
+        # BARU (25 Agustus 2026): jeda animasi "..." singkat dulu sebelum
+        # fase persiapan 4 detik + kalibrasi 180 detik beneran mulai --
+        # sama seperti alur Cek, biar transisinya konsisten.
         self._show_proses_loading("MEMPERSIAPKAN KALIBRASI", lambda: self._start_delayed_calibration(idx))
 
+    # =========================================================================
+    # HALAMAN PROSES (Mode Awam) -- satu halaman countdown besar dipakai
+    # bersama untuk Cek (60s) maupun Kalibrasi (persiapan 4s + 180s)
+    # =========================================================================
+    # FIX (25 Agustus 2026): sebelumnya countdown cuma nulis teks kecil ke
+    # label yang SAMA dipakai halaman "Cek Status" (lbl_check_text/
+    # lbl_desc_text) -- gak ada halaman sendiri, gak ada angka besar, dan
+    # gampang ketuker sama tampilan hasil akhir. Sekarang dipisah total:
+    # proses (loading) punya halamannya sendiri dengan angka countdown
+    # besar + tombol Batal; hasil akhir baru ditampilkan di halaman
+    # terpisah "Cek Status" (index 11).
     def _page_awam_proses(self):
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -1216,17 +1447,24 @@ class Dashboard(QWidget):
         return page
 
     def _set_proses_labels(self, judul, angka, ket):
+        # Helper kecil dipanggil dari semua fungsi countdown (Cek maupun
+        # Kalibrasi) supaya format tampilan halaman Proses selalu konsisten.
         if not hasattr(self, 'lbl_proses_judul'):
             return
         self.lbl_proses_judul.setText(judul)
         self.lbl_proses_angka.setText(angka)
         self.lbl_proses_ket.setText(ket)
 
+    # BARU (25 Agustus 2026): jeda animasi "..." singkat SEBELUM angka
+    # countdown sungguhan mulai jalan -- biar transisi ke halaman Proses
+    # gak berasa "ujug-ujug loncat", ada kesan "sedang menyiapkan" dulu.
+    # Dipakai bareng buat Cek maupun Kalibrasi lewat parameter on_selesai
+    # (fungsi yang dipanggil begitu animasi kelar).
     def _show_proses_loading(self, judul, on_selesai, durasi_detik=3):
         if not self.is_technician_mode:
             self._change_page(10)
         self._loading_dots_step = 0
-        self._loading_dots_total_tick = durasi_detik * 2 
+        self._loading_dots_total_tick = durasi_detik * 2  # tiap tick 500ms
         self._loading_on_selesai = on_selesai
         self._set_proses_labels(judul, "", "Menyiapkan...")
 
@@ -1248,6 +1486,16 @@ class Dashboard(QWidget):
                 callback()
 
     def _cancel_proses(self):
+        # FIX (25 Agustus 2026): sebelumnya TIDAK ADA cara membatalkan sesi
+        # Cek/Kalibrasi yang lagi berjalan -- user harus nunggu sampai
+        # habis atau macet nyangkut kalau salah pencet. Catatan jujur:
+        # tombol ini cuma menghentikan HITUNGAN & STATUS di sisi dashboard
+        # -- ESP32 sendiri tidak menerima perintah "batal" lewat protokol
+        # serial yang ada sekarang, jadi kalau firmware sudah terlanjur
+        # mengeksekusi kalibrasi (R) di sisi alat, proses itu tetap
+        # berjalan di background hardware sampai waktunya habis. Yang
+        # penting: dashboard TIDAK lagi ikut-ikutan macet nungguin itu, dan
+        # user bisa langsung coba lagi dari halaman Detail Mesin.
         if hasattr(self, 'loading_dots_timer') and self.loading_dots_timer.isActive():
             self.loading_dots_timer.stop()
         self._loading_on_selesai = None
@@ -1332,7 +1580,16 @@ class Dashboard(QWidget):
                 QMessageBox.information(self, "Kalibrasi Selesai", "Kalibrasi selesai. Baseline baru sudah tersimpan di slot ini.")
                 self._change_page(9 if self.detail_machine_idx >= 0 else 1)
 
+    # =========================================================================
+    # HALAMAN CEK STATUS (Mode Awam) -- kesimpulan hasil Cek TERAKHIR
+    # =========================================================================
     def _page_awam_cek_status(self):
+        # FIX (25 Agustus 2026): dirombak total jadi layout 2 kolom gaya
+        # "kartu identitas" -- kiri 1/3 buat emoji besar (biar sekali lirik
+        # langsung kebaca "aman/waspada/bahaya"), kanan 2/3 buat rincian
+        # angka dengan LABEL BAHASA BIASA (Getaran/Suara/Suhu/Waktu Cek)
+        # di kotak-kotak terpisah -- bukan satu baris teks mentah kayak
+        # "Vib: 2.21G | Snd: 0.1dB" yang kelihatan kayak dump data teknis.
         page = QWidget()
         outer = QVBoxLayout(page)
         outer.setContentsMargins(4, 4, 4, 4)
@@ -1386,6 +1643,14 @@ class Dashboard(QWidget):
         _baris_rincian("🔊 Suara", "lbl_rincian_suara")
         _baris_rincian("🌡️ Suhu", "lbl_rincian_suhu")
         _baris_rincian("🕐 Waktu Cek", "lbl_rincian_waktu")
+        # BARU (25 Agustus 2026): baris "Jenis Masalah" -- SEBELUMNYA halaman
+        # Mode Awam ini cuma nunjukkin Normal/Waspada/Bahaya TANPA pernah
+        # bilang jenis kerusakannya apa (Unbalance/Misalignment/Bearing
+        # Fault) -- padahal firmware SUDAH ngirim itu (field "diagnosis" di
+        # JSON, sudah ditangkap ke self.current_diag_label sejak baris
+        # ~2413), cuma gak pernah dipasang ke UI Mode Awam. Mode Engineer
+        # (_page_raw, "Fault Diag:") sudah nunjukkin ini dari awal, tapi
+        # juri PIMNAS lihat Mode Awam, bukan Mode Engineer.
         _baris_rincian("🔧 Jenis Masalah", "lbl_rincian_diagnosis")
 
         right_lay.addStretch(1)
@@ -1413,6 +1678,9 @@ class Dashboard(QWidget):
 
         return page
 
+    # =========================================================================
+    # HALAMAN MODE ENGINEER / TEKNISI
+    # =========================================================================
     def _page_raw(self):
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -1578,6 +1846,14 @@ class Dashboard(QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(2)
 
+        # BARU (25 Agustus 2026): dropdown "kondisi" -- SAMA PERSIS konsepnya
+        # dengan MENU_KONDISI di loggerserial.py (kirim command satu huruf
+        # ke firmware buat nge-tag ground_truth, dipakai juga buat nama
+        # file). Sengaja dibikin dropdown biasa di sini, BUKAN menu
+        # bertingkat gaya USSD kayak loggerserial -- biar hasil CSV/TXT
+        # dari dashboard ini format & lokasi foldernya SAMA/nyambung sama
+        # punya loggerserial (folder Dataset/, kolom sama), tapi cara
+        # makainya tetap gaya dashboard (klik dropdown, bukan ketik menu).
         rec_kondisi_lay = QHBoxLayout()
         lbl_kondisi = QLabel("Kondisi:")
         lbl_kondisi.setStyleSheet("font-size: 8px; color: #aaa;")
@@ -1589,6 +1865,12 @@ class Dashboard(QWidget):
         rec_kondisi_lay.addWidget(self.cmb_rec_kondisi, 1)
         layout.addLayout(rec_kondisi_lay)
 
+        # BARU (25 Agustus 2026): tombol TERPISAH dari "MULAI RECORDING" di
+        # bawah -- yang ini nulis ke folder Dataset/ dengan format PERSIS
+        # SAMA seperti loggerserial.py (kolom, nama file), pakai kondisi
+        # yang dipilih di dropdown atas. "MULAI RECORDING" yang lama TETAP
+        # ada apa adanya buat panel forensik/Excel yang sudah ada -- dua
+        # fitur ini sengaja gak digabung biar gak saling ganggu formatnya.
         rec_dataset_ctrl = QHBoxLayout()
         self.btn_toggle_dataset_rec = QPushButton("💾 SIMPAN KE DATASET (Format Logger)")
         self.btn_toggle_dataset_rec.setStyleSheet("background-color: #2f7d4f; color: #ffffff; font-weight: bold; font-size: 9px; height: 24px; border-radius: 3px;")
@@ -1751,6 +2033,9 @@ class Dashboard(QWidget):
 
         return page
 
+    # =========================================================================
+    # HALAMAN MANAJEMEN SLOT MESIN
+    # =========================================================================
     def _page_machine_select(self):
         page = QWidget()
         self.machine_page_layout = QVBoxLayout(page)
@@ -1851,7 +2136,7 @@ class Dashboard(QWidget):
             new_data = dlg.get_data()
             new_idx = len(self.machines)
             self.machines.append(new_data)
-            self._save_machines_config()  
+            self._save_machines_config()  # Simpan ke memori lokal
             self._rebuild_machine_grid()
             if hasattr(self, 'awam_machine_grid'):
                 self._rebuild_awam_machine_grid()
@@ -1863,7 +2148,7 @@ class Dashboard(QWidget):
                 QMessageBox.warning(self, "Peringatan", "Slot utama (0 & 1) tidak dapat dihapus!")
                 return
             self.machines.pop(idx)
-            self._save_machines_config()  
+            self._save_machines_config()  # Simpan ke memori lokal
             if self.selected_machine_idx == idx:
                 self.selected_machine_idx = -1
                 self.lbl_machine_active.setText("⚙️ - Pilih Slot -")
@@ -2064,20 +2349,16 @@ class Dashboard(QWidget):
         if serial is not None:
             t = threading.Thread(target=self._read_serial_worker, daemon=True)
             t.start()
-        else:
-            self.last_serial_error = (
-                "Modul pyserial belum terinstall. Jalankan: pip install pyserial"
-            )
 
     def _resolve_serial_port(self):
         try:
             ports = list(serial.tools.list_ports.comports())
         except Exception:
             ports = []
-        if not ports:
+        if not ports: 
             return SERIAL_PORT
         available = [p.device for p in ports]
-        if SERIAL_PORT in available:
+        if SERIAL_PORT in available: 
             return SERIAL_PORT
         for p in ports:
             desc = f"{p.description} {p.manufacturer or ''}".upper()
@@ -2090,16 +2371,8 @@ class Dashboard(QWidget):
             try:
                 if self.ser is None or not self.ser.is_open:
                     port_to_use = self._resolve_serial_port()
-                    try:
-                        self.ser = serial.Serial(port_to_use, BAUD_RATE, timeout=0.1)
-                    except Exception as open_err:
-                        self.serial_connected = False
-                        self.ser = None
-                        self.last_serial_error = f"{type(open_err).__name__}: {open_err}"
-                        time.sleep(1)
-                        continue
+                    self.ser = serial.Serial(port_to_use, BAUD_RATE, timeout=0.1)
                     self.serial_connected = True
-                    self.last_serial_error = ""
 
                 raw = self.ser.readline()
                 if not raw:
@@ -2119,6 +2392,18 @@ class Dashboard(QWidget):
                 except (json.JSONDecodeError, ValueError):
                     continue
 
+                # FIX (25 Agustus 2026) -- BUG NYATA yang baru ketauan waktu
+                # nambah fitur "Simpan ke Dataset": paket JSON ringkasan sesi
+                # ("type":"session_summary", dikirim firmware begitu sesi
+                # Cek 60 detik kelar) TIDAK PERNAH DIBEDAKAN dari paket data
+                # sensor biasa di sini. Paket ringkasan itu isinya field
+                # yang SAMA SEKALI beda (slot/dominant/duration_ms/dst, gak
+                # ada rms_v/rms_a/dst) -- jadi kalau lolos ke baris-baris di
+                # bawah, semua current_v/current_a/dst diam-diam DIRESET KE
+                # 0.0 sesaat, bikin grafik & panel Engineer "kedip" ke nol
+                # tiap sesi Cek selesai. Sekarang dipisah: paket ringkasan
+                # ditangani sendiri (buat fitur Dataset), paket data biasa
+                # lanjut diproses seperti biasa.
                 if data.get("type") == "session_summary":
                     if self.dataset_recording:
                         self._tulis_ringkasan_sesi_dashboard(data)
@@ -2129,6 +2414,15 @@ class Dashboard(QWidget):
                 self.current_v = float(data.get("rms_v", 0.0))
                 self.current_a = float(data.get("rms_a", 0.0))
                 self.current_temp = float(data.get("temp", 0.0))
+                # FIX (25 Agustus 2026): nama field JSON di bawah ini sebelumnya
+                # gak cocok sama yang BENERAN dikirim firmware (RaspberryPiData
+                # Transmitter.cpp) -- vib_x/y/z, ml_confidence, diagnosis_label,
+                # diagnosis_confidence, diagnosis_flags TIDAK PERNAH ADA di JSON
+                # asli (yang ada: rms_x/y/z, ml_conf, diagnosis, diag_conf,
+                # diag_flags). Akibatnya data.get() selalu gagal nemu, diam-diam
+                # balik ke nilai default (0.0 / "N/A" / "Aman") walau data
+                # aslinya ADA -- panel diagnosis kelihatan "kosong terus" padahal
+                # firmware-nya jalan normal. Disamakan ke nama asli firmware.
                 self.current_vx = float(data.get("rms_x", 0.0))
                 self.current_vy = float(data.get("rms_y", 0.0))
                 self.current_vz = float(data.get("rms_z", 0.0))
@@ -2146,6 +2440,12 @@ class Dashboard(QWidget):
                 self.current_kurtosis = float(data.get("kurtosis", 3.0))
                 self.current_diagnosis_flags = data.get("diag_flags", "Aman")
 
+                # CATATAN: firmware kamu SAAT INI belum pernah kirim "fft_hz"/
+                # "fft_mag" sama sekali (cek RaspberryPiDataTransmitter.cpp) --
+                # jadi grafik FFT di Mode Engineer TETAP bakal kosong sampai
+                # ada fitur baru di firmware yang ngirim data spektrum mentah.
+                # Ini bukan salah-nama-field kayak yang di atas, ini fitur yang
+                # emang belum dibikin di firmware.
                 self.fft_hz_buffer = data.get("fft_hz", [])
                 self.fft_mag_buffer = data.get("fft_mag", [])
 
@@ -2187,6 +2487,14 @@ class Dashboard(QWidget):
                     ])
                     self.csv_file.flush()
 
+                # BARU (25 Agustus 2026): "Simpan ke Dataset" -- BENAR-BENAR
+                # terpisah dari blok di atas (writer, file, kondisi aktif
+                # semua beda). Baris CSV-nya dibangun PERSIS seperti
+                # loggerserial.py: langsung dari dict JSON mentah (KOLOM_
+                # DATASET), bukan dari nilai current_* yang sudah diproses
+                # dashboard -- supaya field yang dashboard sendiri gak
+                # pernah pakai (cur, snr, e_unbalance, roughness, dst) tetap
+                # ikut kesimpan lengkap, sama seperti hasil loggerserial.py.
                 if self.dataset_recording and self.dataset_csv_writer:
                     waktu_dataset = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     baris_dataset = [
@@ -2209,7 +2517,6 @@ class Dashboard(QWidget):
             except Exception as e:
                 self.serial_connected = False
                 self.ser = None
-                self.last_serial_error = f"{type(e).__name__}: {e}"
                 time.sleep(1)
 
     def _trigger_auto_event_snapshot(self, status_severity_str):
@@ -2303,6 +2610,15 @@ class Dashboard(QWidget):
         if self.current_v is not None:
             self.tick += 1
 
+            # FIX (25 Agustus 2026): blok ini DULU nge-update ikon/teks status
+            # + "Vib/Snd/Temp" di halaman awam SETIAP TICK (tiap 200ms) selama
+            # gak lagi Cek/Kalibrasi -- itu artinya layar awam nunjukkin data
+            # HIDUP/REAL-TIME terus-menerus. Itu SALAH sesuai spek yang diminta:
+            # "user lihat data mungkin data lama... dibatasi cuma di check,
+            # bukan real-time". Sekarang dihapus dari sini -- update-nya
+            # dipindah ke _check_session_countdown_tick() (SEKALI, tepat pas
+            # sesi Cek 60 detik selesai) dan ke _select_machine_slot() (SEKALI,
+            # pas ganti mesin) -- bukan lagi nempel ke tiap tick data masuk.
 
             self.curve_v.setData(list(self.time_buffer), list(self.v_buffer))
             self.curve_a.setData(list(self.time_buffer), list(self.a_buffer))
@@ -2342,8 +2658,6 @@ class Dashboard(QWidget):
                 f"Live | Vib: {self.current_v:.2f} G | Snd: {self.current_a:.1f} dB | "
                 f"Tmp: {self.current_temp:.1f} °C | RPM: {rpm_txt} | D²: {d2_txt}"
             )
-
-            status_key = (self.current_status_device or "").strip().lower()
 
             self.gauge_v.set_value(self.current_v, status_key)
             self.gauge_s.set_value(self.current_a, status_key)
@@ -2385,10 +2699,7 @@ class Dashboard(QWidget):
 
                 self._render_session_summary()
         elif not self.serial_connected:
-            if self.last_serial_error:
-                self.lbl_sys_status.setText(f"● GAGAL SAMBUNG: {self.last_serial_error}")
-            else:
-                self.lbl_sys_status.setText("● MENCARI PERANGKAT...")
+            self.lbl_sys_status.setText("● MENCARI PERANGKAT (COM3)...")
             self.lbl_sys_status.setStyleSheet(f"font-size: 8px; font-weight: bold; color: {COL_WARN};")
         else:
             self.lbl_sys_status.setText("● TERSAMBUNG — MENUNGGU DATA JSON...")
@@ -2396,6 +2707,13 @@ class Dashboard(QWidget):
             self.lbl_proc_snapshot.setText("Menunggu data serial dari ESP32...")
 
     def _toggle_dataset_recording(self):
+        # BARU (25 Agustus 2026): sesuai permintaan -- "aku ingin dapat file
+        # csv, data txt seperti loggerserial dimana file penyimpan sama,
+        # formatting sama, pilihan sama, tapi sesuaikan dengan dashboard
+        # ini... aku ingin dari dashboard, bukan loggerserial." Fungsi ini
+        # menghasilkan file CSV + ringkasan .txt yang formatnya PERSIS sama
+        # dengan loggerserial.py (folder Dataset/, nama file, kolom), tapi
+        # dikontrol lewat tombol dashboard, bukan menu ketik-huruf.
         if self.selected_machine_idx < 0:
             QMessageBox.warning(self, "Perhatian", "Silakan pilih Target Mesin terlebih dahulu!")
             return
@@ -2411,6 +2729,9 @@ class Dashboard(QWidget):
             kondisi_idx = self.cmb_rec_kondisi.currentIndex()
             huruf_kondisi, label_kondisi = KONDISI_REKAM_OPSI[kondisi_idx]
 
+            # Kirim huruf kondisi ke firmware -- SAMA seperti set_kondisi()
+            # di loggerserial.py -- ini yang bikin field "ground_truth" di
+            # JSON firmware ikut ke-tag sesuai kondisi yang dipilih.
             self._send_command(huruf_kondisi)
 
             ts = datetime.now().strftime("%Y%m%d_%H%M")
@@ -2441,6 +2762,10 @@ class Dashboard(QWidget):
             self.lbl_dataset_rec_status.setText("● Berkas Dataset Tersimpan")
 
     def _tulis_ringkasan_sesi_dashboard(self, data):
+        # Kembaran persis dari tulis_ringkasan_sesi() di loggerserial.py --
+        # dipanggil kalau paket JSON "type":"session_summary" masuk SEMENTARA
+        # _toggle_dataset_recording aktif, biar ringkasan sesi Cek juga ikut
+        # tercatat ke file .txt yang formatnya sama.
         if not self.dataset_summary_path:
             return
         waktu = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

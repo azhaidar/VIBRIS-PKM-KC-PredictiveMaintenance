@@ -155,22 +155,7 @@ void Diagnosis_Classify(float bandEnergies[4], float bandBaselineMean[4],
         // Ada band yang menyimpang -- gunakan ENERGY TERTINGGI untuk diagnosis
         // (bukan Z-score tertinggi, yang bisa bias terhadap std kecil)
         // 4. Rule-Based Heuristik: Petakan pita frekuensi dominan ke label kerusakan fisik
-        //
-        // FIX (27 Agustus 2026, permintaan Ketua Tim): band index 2 (BPFO)
-        // dan index 3 (BPFI) DIGABUNG jadi satu label "BEARING_FAULT".
-        // Sebelumnya device keluarin "BEARING_BPFO" vs "BEARING_BPFI" secara
-        // terpisah -- itu istilah teknis vibration analysis yang operator
-        // UMKM/awam gak perlu tahu. Device ini untuk pengguna non-teknis
-        // (lihat BAB 1.1 & 2.8 proposal), jadi begitu ada masalah bearing,
-        // cukup bilang "BEARING_FAULT" saja, sama seperti "UNBALANCE" yang
-        // dari awal memang sudah satu label tanpa dipecah lagi. Perhitungan
-        // band BPFO/BPFI di FFTProcessor tetap terpisah secara internal
-        // (dua bidang frekuensi fisiknya memang beda), cuma label akhir yang
-        // ditampilkan ke pengguna yang disatukan. groundTruthLabel di
-        // main.ino juga sudah pakai "BEARING_FAULT" (bukan dipecah), jadi
-        // perubahan ini menyamakan classifier dengan konvensi yang sudah
-        // dipakai di tempat lain.
-        switch (maxEnergyIndex) {
+        switch (maxEnergyIndex) { 
             case 0:
                 strcpy(labelOutput, "UNBALANCE");
                 break;
@@ -178,8 +163,10 @@ void Diagnosis_Classify(float bandEnergies[4], float bandBaselineMean[4],
                 strcpy(labelOutput, "MISALIGNMENT");
                 break;
             case 2:
+                strcpy(labelOutput, "BEARING_BPFO");
+                break;
             case 3:
-                strcpy(labelOutput, "BEARING_FAULT");
+                strcpy(labelOutput, "BEARING_BPFI");
                 break;
             default:
                 strcpy(labelOutput, "UNKNOWN_ANOMALY");

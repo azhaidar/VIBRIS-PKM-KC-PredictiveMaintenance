@@ -90,7 +90,7 @@ static void TaskAudioFFTProcessor(void *pvParameters) {
 }
 void Scheduler_InitTasks() {
     vibrationQueue = xQueueCreate(1, sizeof(VibrationBuffer));
-    audioQueue = xQueueCreate(1, sizeof(AudioBuffer));   // BARU
+    audioQueue = xQueueCreate(1, sizeof(AudioBuffer)); 
 
     xTaskCreatePinnedToCore(
         TaskFFTProcessor, "Task_FFT", STACK_TASK_FFT, NULL,

@@ -72,10 +72,10 @@
 // 256), tapi kalau FFT_SAMPLES naik lagi ke 1024 misalnya, larik itu bakal
 // kepotong (guard `noiseCount < 256` mencegah crash, tapi noise floor-nya
 // jadi dihitung dari data yang gak lengkap) -- perlu dinaikkan juga saat itu.
-#define FFT_SAMPLES          512     // Jumlah sampel FFT getaran (Kunci lintas file)
+#define FFT_SAMPLES          256     // Jumlah sampel FFT getaran (Kunci lintas file)
 // Sistem Monitoring Configuration
 #define TICK_DELAY_REPORT    100   // Interval Serial Print pelaporan data (ms)
-#define VIBRATION_SAMPLE_RATE_HZ 1230U
+#define VIBRATION_SAMPLE_RATE_HZ 3600U
 #define VIBRATION_SAMPLE_PERIOD_US \
     (1000000UL / VIBRATION_SAMPLE_RATE_HZ)
 
@@ -88,7 +88,7 @@
 #define RPM_MAX_DELTA_MIN       50.0f   // BARU
 #define PRIO_TASK_AUDIO_FFT     1       // BARU
 #define STACK_TASK_AUDIO_FFT    4096    // BARU
-#define VIBRATION_ABSOLUTE_FLOOR 1.2f
+#define VIBRATION_ABSOLUTE_FLOOR 0.05f
 
 // FIX (20 Agustus 2026): ambang batas AMPLITUDO MUTLAK, bukan adaptif/belajar
 // sendiri (percobaan sebelumnya pakai ambang belajar-sendiri "ambientRmsEMA"
@@ -106,7 +106,7 @@
 // yang jauh lebih kecil/besar dipakai, angka ini WAJIB dicek ulang dengan
 // cara yang sama (kumpulin rms_v dari data nyata, cari celahnya) -- jangan
 // diasumsikan otomatis masih benar.
-#define VIBRATION_ABSOLUTE_FLOOR 1.2f
+#define VIBRATION_ABSOLUTE_FLOOR 0.05f
 
 
 #define FIXED_BPFO_HZ  69.6f
@@ -118,7 +118,7 @@
 #define BAND_WINDOW_PERCENT 0.10f  // toleransi ±10% di sekitar frekuensi fixed
 #define DEBUG_VERBOSE 0   // 0 = sesi ambil data resmi (JSON bersih), 1 = debug manual
 #define CHECK_SESSION_DURATION_MS 60000UL   // 1 menit nanti ubah terserah kalian dah ya
-#define ENABLE_ARUS_SENSOR 1   // AKTIF arusnya
+#define ENABLE_ARUS_SENSOR 0   // AKTIF arusnya
 
 // FIX (21 Agustus 2026): MATIKAN pembelajaran baseline online (yang tadinya
 // jalan otomatis di SETIAP siklus deteksi lewat updateBaselineIfNormal() /

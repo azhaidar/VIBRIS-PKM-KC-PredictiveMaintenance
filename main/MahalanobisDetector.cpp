@@ -50,6 +50,106 @@ static bool  diagBaselineReady = false;
 static float audioBandMean[AUDIO_BAND_COUNT] = {0.20f, 0.20f, 0.20f};
 static float audioBandVar[AUDIO_BAND_COUNT]  = {0.01f, 0.01f, 0.01f};
 
+// ===================================================================
+// BARU (26 Agustus 2026): Ring-buffer untuk median filtering
+// Tujuan: Jangan diagnosis dari 1 frame FFT saja. Ambil median dari
+// 10-15 frame terakhir buat menolak outlier noise.
+// Konsep: Motor sehat punya variasi kecil (2.2 → 2.3 → 2.5), bukan
+// lompatan gede (2.2 → 3.2). Median lebih stabil dari mean terhadap
+// noise sesaat, dan tidak butuh mengubah DiagnosisClassifier logic.
+// ===================================================================
+#define BAND_ENERGY_BUFFER_SIZE 15
+
+static float vibrationBandEnergyBuffer[BAND_ENERGY_BUFFER_SIZE][4];
+static int   vibrationBandBufferIdx = 0;
+static int   vibrationBandBufferFilled = 0;  // Berapa banyak slot yang sudah terisi
+
+static float audioBandEnergyBuffer[BAND_ENERGY_BUFFER_SIZE][AUDIO_BAND_COUNT];
+static int   audioBandBufferIdx = 0;
+static int   audioBandBufferFilled = 0;
+
+/**
+ * @brief Insert energy values ke ring-buffer dan return median
+ * Algoritma: simpan 15 frame terakhir, hitung median setiap kali insert.
+ * Median dipilih karena: (1) O(n) hitung, (2) robust terhadap outlier,
+ * (3) tidak butuh sorting penuh, cukup quick-select atau bubble sort n=15.
+ */
+static void insertAndGetMedianBandEnergy(float newEnergy[4], float medianOut[4],
+                                          float buffer[BAND_ENERGY_BUFFER_SIZE][4],
+                                          int *bufIdx, int *bufFilled) {
+    // Insert nilai baru ke buffer (circular)
+    for (int i = 0; i < 4; i++) {
+        buffer[*bufIdx][i] = newEnergy[i];
+    }
+
+    // Update index dan filled counter
+    *bufIdx = (*bufIdx + 1) % BAND_ENERGY_BUFFER_SIZE;
+    if (*bufFilled < BAND_ENERGY_BUFFER_SIZE) {
+        (*bufFilled)++;
+    }
+
+    // Hitung median untuk setiap band
+    for (int bandIdx = 0; bandIdx < 4; bandIdx++) {
+        // Ekstrak kolom band dari buffer (simple bubble sort untuk n=15)
+        float tempCol[BAND_ENERGY_BUFFER_SIZE];
+        for (int i = 0; i < *bufFilled; i++) {
+            tempCol[i] = buffer[i][bandIdx];
+        }
+
+        // Bubble sort sederhana (n=15 sangat cepat)
+        for (int i = 0; i < *bufFilled - 1; i++) {
+            for (int j = 0; j < *bufFilled - 1 - i; j++) {
+                if (tempCol[j] > tempCol[j + 1]) {
+                    float tmp = tempCol[j];
+                    tempCol[j] = tempCol[j + 1];
+                    tempCol[j + 1] = tmp;
+                }
+            }
+        }
+
+        // Ambil median
+        int medianIdx = *bufFilled / 2;
+        medianOut[bandIdx] = tempCol[medianIdx];
+    }
+}
+
+static void insertAndGetMedianAudioBandEnergy(float newEnergy[AUDIO_BAND_COUNT],
+                                               float medianOut[AUDIO_BAND_COUNT],
+                                               float buffer[BAND_ENERGY_BUFFER_SIZE][AUDIO_BAND_COUNT],
+                                               int *bufIdx, int *bufFilled) {
+    // Insert nilai baru
+    for (int i = 0; i < AUDIO_BAND_COUNT; i++) {
+        buffer[*bufIdx][i] = newEnergy[i];
+    }
+
+    *bufIdx = (*bufIdx + 1) % BAND_ENERGY_BUFFER_SIZE;
+    if (*bufFilled < BAND_ENERGY_BUFFER_SIZE) {
+        (*bufFilled)++;
+    }
+
+    // Hitung median untuk setiap band audio
+    for (int bandIdx = 0; bandIdx < AUDIO_BAND_COUNT; bandIdx++) {
+        float tempCol[BAND_ENERGY_BUFFER_SIZE];
+        for (int i = 0; i < *bufFilled; i++) {
+            tempCol[i] = buffer[i][bandIdx];
+        }
+
+        // Bubble sort
+        for (int i = 0; i < *bufFilled - 1; i++) {
+            for (int j = 0; j < *bufFilled - 1 - i; j++) {
+                if (tempCol[j] > tempCol[j + 1]) {
+                    float tmp = tempCol[j];
+                    tempCol[j] = tempCol[j + 1];
+                    tempCol[j + 1] = tmp;
+                }
+            }
+        }
+
+        int medianIdx = *bufFilled / 2;
+        medianOut[bandIdx] = tempCol[medianIdx];
+    }
+}
+
 void setDiagnosisBandBaseline(float bandMean[4], float bandStd[4]) {
     for (int i = 0; i < 4; i++) {
         diagBandMean[i] = bandMean[i];
@@ -66,6 +166,10 @@ void setAudioBandBaseline(float mean[AUDIO_BAND_COUNT], float std[AUDIO_BAND_COU
 }
 void resetDiagnosisBandBaseline() {
     diagBaselineReady = false;
+    for (int i = 0; i < 4; i++) {
+        diagBandMean[i] = 0.0f;
+        diagBandVar[i] = 1.0f;
+    }
 }
 
 // BARU: EMA generik band mean/variance, dipakai untuk band getaran (n=4) & audio (n=3)
@@ -108,7 +212,8 @@ const char* getDebounceStatus(const char* newLabel) {
 // Huber clipping per sensor
 // ============================================================================
 void debugPrintD2Contribution(float z_scores_raw[3], float z_scores_clipped[3], float sigmaInverse[3][3]) {
-    Serial.println(F("\n[DEBUG D² BREAKDOWN]"));
+    // BARU (27 Agustus 2026): Output CSV format otomatis ke file debug
+    // Selalu aktif, loggerserial.py parse [DEBUG_D2] line dan tulis ke _debug.txt
 
     // Hitung D² raw (sebelum clip)
     float temp_raw[3] = {0.0f, 0.0f, 0.0f};
@@ -146,22 +251,30 @@ void debugPrintD2Contribution(float z_scores_raw[3], float z_scores_clipped[3], 
         contrib_clipped[i] = z_scores_clipped[i] * temp_clipped[i];
     }
 
-    // Print hasil
-    Serial.printf("  D² RAW (sebelum Huber)  = %.3f\n", d2_raw);
-    Serial.printf("  D² CLIPPED (sesudah Huber) = %.3f\n", d2_clipped);
-    Serial.printf("  Delta = %.3f\n\n", d2_clipped - d2_raw);
+    // OUTPUT READABLE FORMAT (per 10 Hz = 100ms per frame)
+    // FIX (28 Agustus 2026): format readable + CSV hybrid untuk mudah dibaca & parse
+    static unsigned long debug_start_ms = millis();
+    unsigned long elapsed_ms = millis() - debug_start_ms;
 
-    const char* sensorName[3] = {"Getaran", "Audio", "Suhu"};
-    const float HUBER_K[3] = {5.0f, 3.0f, 4.0f};
+    // Tentukan status D² clipped
+    const char* d2_status = "OK";
+    if (d2_clipped > 11.345f) d2_status = "DANGER";
+    else if (d2_clipped > 7.815f) d2_status = "WARN";
 
-    for (int i = 0; i < 3; i++) {
-        Serial.printf("  %s (index %d):\n", sensorName[i], i);
-        Serial.printf("    z-score RAW     = %.4f\n", z_scores_raw[i]);
-        Serial.printf("    z-score CLIPPED = %.4f (k=%.1f)\n", z_scores_clipped[i], HUBER_K[i]);
-        Serial.printf("    Kontribusi RAW     = %.4f\n", contrib_raw[i]);
-        Serial.printf("    Kontribusi CLIPPED = %.4f\n", contrib_clipped[i]);
-        Serial.printf("    Pengurangan = %.4f\n\n", contrib_raw[i] - contrib_clipped[i]);
-    }
+    // Format: [DEBUG_D2] T=157ms | D2: 34.4→2.1 (DANGER→OK) | Vib: -25.0→-5.0 | Audio: -7.6→-3.0 | Temp: -0.9→-0.9 | CSV: 157,34.4,2.1,-32.3,...
+    Serial.printf("[DEBUG_D2] T=%lu | D2: %.1f→%.1f (%s) | Vib: %.1f→%.1f | Audio: %.1f→%.1f | Temp: %.1f→%.1f | CSV:%lu,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
+        elapsed_ms,
+        d2_raw, d2_clipped, d2_status,
+        z_scores_raw[0], z_scores_clipped[0],
+        z_scores_raw[1], z_scores_clipped[1],
+        z_scores_raw[2], z_scores_clipped[2],
+        // CSV part for parsing
+        elapsed_ms,
+        d2_raw, d2_clipped, d2_clipped - d2_raw,
+        z_scores_raw[0], z_scores_clipped[0],
+        z_scores_raw[1], z_scores_clipped[1],
+        z_scores_raw[2], z_scores_clipped[2]
+    );
 }
 
 // State debounce -- taruh di scope file, sejajar dengan diagBandMean dkk
@@ -358,18 +471,12 @@ void debugPrintD2Contribution(float z_scores_raw[3], float z_scores_clipped[3], 
     float d2 = computeMahalanobisQuadraticForm(currentFeaturesStd, zeroMean, sigmaInverse);
     float currentRpm = Scheduler_GetLatestRPM();
 
-    // FIX (25 Agustus 2026): RPM<=0 itu ADA 2 KEMUNGKINAN BEDA --
-    // (1) motor BENERAN diam/mati (getaran juga rendah), atau
-    // (2) motor JALAN tapi RPM Estimator gagal baca (SNR jelek/sensor kendor),
-    //     padahal getarannya jelas ada (rms_getaran tinggi).
-    // Kode LAMA nge-treat keduanya sama-sama "Diam" -- padahal D2 di atas ini
-    // SUDAH DIHITUNG TANPA BUTUH RPM SAMA SEKALI (cuma dari getaran+suara+suhu),
-    // jadi kasus (2) kehilangan status Normal/Waspada/Bahaya yang sebenarnya
-    // valid, cuma gara-gara RPM Estimator-nya doang yang gagal.
-    // Bedakan pakai VIBRATION_ABSOLUTE_FLOOR yang SUDAH ada & sudah tervalidasi
-    // dari data asli (lihat config.h) -- bukan angka baru yang dikarang.
     bool trulyIdle = (currentRpm <= 0.0f) && (merged.rms_getaran <= VIBRATION_ABSOLUTE_FLOOR);
+    Serial.printf("[MOTOR-STATE] RPM=%.1f, RMS_vib=%.4f (threshold=%.4f), trulyIdle=%d, D2=%.2f\n",
+        currentRpm, merged.rms_getaran, VIBRATION_ABSOLUTE_FLOOR, (int)trulyIdle, d2);
+
     const char* rawLabel = trulyIdle ? "Diam" : classifyStatusFromD2(d2);
+    Serial.printf("[STATUS-LOGIC] rawLabel=%s\n", rawLabel);
     const char* label = getDebounceStatus(rawLabel);
     // FIX (25 Agustus 2026): selama masih dalam jendela settle abis ganti
     // baseline (lihat catatan panjang di atas fungsi ini), JANGAN percaya
@@ -433,6 +540,14 @@ void debugPrintD2Contribution(float z_scores_raw[3], float z_scores_clipped[3], 
         bool bandEnergiesFresh = (bandEnergies[0] != 0.0f || bandEnergies[1] != 0.0f ||
                                    bandEnergies[2] != 0.0f || bandEnergies[3] != 0.0f);
         if (bandEnergiesFresh) {
+            // BARU (26 Agustus 2026): Median filtering ring-buffer
+            // Jangan diagnosis dari 1 frame. Ambil median dari 15 frame terakhir.
+            // Ini menolak outlier (3.2 sesaat), tetap peka terhadap perubahan konsisten.
+            float medianBandEnergies[4];
+            insertAndGetMedianBandEnergy(bandEnergies, medianBandEnergies,
+                                         vibrationBandEnergyBuffer,
+                                         &vibrationBandBufferIdx, &vibrationBandBufferFilled);
+
             float diagBandStd[4];   // BARU: konversi variance->std tiap siklus
             for (int i = 0; i < 4; i++) diagBandStd[i] = sqrtf(diagBandVar[i] > 1e-8f ? diagBandVar[i] : 1e-8f);
 
@@ -440,12 +555,15 @@ void debugPrintD2Contribution(float z_scores_raw[3], float z_scores_clipped[3], 
             float diagConfidence = 0.0f;
 
             uint8_t diagFlags = 0;
-            Diagnosis_Classify(bandEnergies, diagBandMean, diagBandStd, diagLabel, &diagConfidence, &diagFlags);
+            // Ubah: gunakan medianBandEnergies (dari ring-buffer), bukan raw bandEnergies
+            Diagnosis_Classify(medianBandEnergies, diagBandMean, diagBandStd, diagLabel, &diagConfidence, &diagFlags);
             strncpy(result.diagnosis_label, diagLabel, sizeof(result.diagnosis_label) - 1);
             result.diagnosis_label[sizeof(result.diagnosis_label) - 1] = '\0';
             result.diagnosis_confidence = diagConfidence;
 
             #if ENABLE_ONLINE_BASELINE_LEARNING
+            // PENTING: updateBandBaselineIfNormal tetap pakai raw bandEnergies, bukan median!
+            // Karena baseline perlu belajar dari data asli, median hanya buat diagnosis.
             updateBandBaselineIfNormal(diagBandMean, diagBandVar, 4, bandEnergies, isNormal);   // BARU
             #endif
             // FIX (21 Agustus 2026): baseline band diagnosis (Unbalance/Misalign/
@@ -459,19 +577,30 @@ void debugPrintD2Contribution(float z_scores_raw[3], float z_scores_clipped[3], 
         float audioBandEnergies[AUDIO_BAND_COUNT];
         Scheduler_GetLatestAudioBandEnergies(audioBandEnergies);
 
+        // BARU (26 Agustus 2026): Median filtering ring-buffer untuk audio
+        // Sama prinsipnya seperti vibration: jangan diagnosis dari 1 frame audio.
+        // Ambil median dari 15 frame terakhir untuk proteksi terhadap fluktuasi ambient suara.
+        float medianAudioBandEnergies[AUDIO_BAND_COUNT];
+        insertAndGetMedianAudioBandEnergy(audioBandEnergies, medianAudioBandEnergies,
+                                          audioBandEnergyBuffer,
+                                          &audioBandBufferIdx, &audioBandBufferFilled);
+
         float audioBandStd[AUDIO_BAND_COUNT];
         for (int i = 0; i < AUDIO_BAND_COUNT; i++) audioBandStd[i] = sqrtf(audioBandVar[i] > 1e-8f ? audioBandVar[i] : 1e-8f);
 
         char audioLabel[20];
         float audioConf = 0.0f;
-        uint8_t audioFlags = 0; 
-        DriverAudioDiagnosis_Classify(audioBandEnergies, audioBandMean, audioBandStd, audioLabel, &audioConf, &audioFlags);
+        uint8_t audioFlags = 0;
+        // Ubah: gunakan medianAudioBandEnergies (dari ring-buffer), bukan raw audioBandEnergies
+        DriverAudioDiagnosis_Classify(medianAudioBandEnergies, audioBandMean, audioBandStd, audioLabel, &audioConf, &audioFlags);
 
         strncpy(result.audio_diagnosis_label, audioLabel, sizeof(result.audio_diagnosis_label) - 1);
         result.audio_diagnosis_label[sizeof(result.audio_diagnosis_label) - 1] = '\0';
         result.audio_diagnosis_confidence = audioConf;
 
         #if ENABLE_ONLINE_BASELINE_LEARNING
+        // PENTING: updateBandBaselineIfNormal tetap pakai raw audioBandEnergies, bukan median!
+        // Karena baseline perlu belajar dari data asli, median hanya buat diagnosis.
         updateBandBaselineIfNormal(audioBandMean, audioBandVar, AUDIO_BAND_COUNT, audioBandEnergies, isNormal);
         #endif
         // FIX (21 Agustus 2026): baseline band audio ikut dimatikan adaptasi

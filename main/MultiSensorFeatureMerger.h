@@ -42,6 +42,8 @@ condition.
 
 void updateVibrationFeature(float rmsValue);
 void updateAudioFeature(float rmsValue);
+void updateAudioFeatureDB(float audio_dB);  // BARU (26 Agustus 2026): simpan audio dB
+float getLatestAudio_dB();  // BARU (26 Agustus 2026): baca audio dB
 void updateCurrentFeature(float rmsValue);
 void updateTemperatureFeature(float value);
 bool getMergedFeatures(SensorFeatures *output);
