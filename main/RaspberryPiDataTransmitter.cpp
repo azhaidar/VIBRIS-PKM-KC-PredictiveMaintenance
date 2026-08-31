@@ -81,10 +81,21 @@ void Transmitter_SendResult(SensorFeatures features, DetectionResult result, con
         float arusRawADC = 0.0f;
     #endif
 
+    // FIX (31 Agustus 2026): features.rms_getaran dihitung dari sample yang
+    // dikonversi pakai frekuensi DEFAULT/asumsi (25Hz) kalau RPM belum
+    // kekunci -- sengaja gitu, biar rms_getaran tetap bisa dipakai sebagai
+    // "ada sinyal apa nggak" buat proses penguncian RPM itu sendiri (lihat
+    // FFTProcessor.cpp, RPM_IsSignalReliable). Konsekuensinya: kalau motor
+    // BENERAN diam, rms_getaran masih berisi noise sensor yang "digedein"
+    // pakai asumsi 25Hz itu, jadi bukan representasi kecepatan getaran
+    // sebenarnya. Baru DI SINI, titik pengiriman ke dashboard, nilainya
+    // di-nolkan kalau RPM belum berhasil terdeteksi (motor gak kedeteksi
+    // muter = gak ada getaran periodik yang bisa diukur jadi mm/s beneran).
+    float rmsVReported = (result.rpm_estimated > 0.0f) ? features.rms_getaran : 0.0f;
 
     Serial.printf(
         "{"
-        "\"rms_v\":%.4f,\"rms_x\":%.4f,\"rms_y\":%.4f,\"rms_z\":%.4f,"
+        "\"rms_v_mms\":%.4f,\"rms_x_mms\":%.4f,\"rms_y_mms\":%.4f,\"rms_z_mms\":%.4f,"
         "\"rms_a\":%.6f,\"rms_suara_db\":%.2f,\"cur\":%.4f,\"cur_raw_adc\":%.2f,"
         "\"temp\":%.2f,\"temp_raw\":%.3f,\"temp_rate\":%.3f,"
         "\"rpm\":%.2f,\"snr\":%.2f,\"d2\":%.3f,\"status\":\"%s\",\"kurtosis\":%.3f,"
@@ -102,7 +113,7 @@ void Transmitter_SendResult(SensorFeatures features, DetectionResult result, con
         "\"ground_truth\":\"%s\""
         "}\n",
 
-        features.rms_getaran, rmsX, rmsY, rmsZ,
+        rmsVReported, rmsX, rmsY, rmsZ,
         features.rms_suara, features.rms_suara_db, arusValue, arusRawADC,
         features.suhu, DriverSuhu_GetLastRawTemp(), getSmoothedTempRate(features.suhu),
         result.rpm_estimated, Scheduler_GetLatestSNR(), result.mahalanobis_D2, result.status_label, features.kurtosis,
