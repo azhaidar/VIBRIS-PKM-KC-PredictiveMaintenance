@@ -42,3 +42,4 @@ void Scheduler_GetLatestAxisRMS(float *xOut, float *yOut, float *zOut);
 // TAMBAH DUA BARIS INI:
 float Scheduler_GetLatestRoughness();
 float Scheduler_GetLatestBrightness();
+float Scheduler_GetLatestDominantFreqHz();
