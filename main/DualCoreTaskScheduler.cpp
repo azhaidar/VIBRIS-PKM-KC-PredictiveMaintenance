@@ -23,6 +23,7 @@ QueueHandle_t Scheduler_GetAudioQueue() { return audioQueue; }
 static float latestRmsX = 0.0f;
 static float latestRmsZ = 0.0f;
 static float latestRmsY = 0.0f;
+static volatile float latestDominantFreqHz = 0.0f;
 
 static volatile float latestRoughness = 0.0f;
 static volatile float latestBrightness = 0.0f;
@@ -52,9 +53,10 @@ static void TaskFFTProcessor(void *pvParameters) {
             if (rpmResult > 0.0f) lastValidRPM = rpmResult;
             latestRPM = rpmResult;
             latestSNR = snrResult;
-            latestRmsX = incomingBuffer.rms_x_raw;   // 
-            latestRmsZ = incomingBuffer.rms_z_raw;
-            latestRmsY = incomingBuffer.rms_y_raw;   //
+            if (rpmResult > 60.0f) latestDominantFreqHz = rpmResult / 60.0f;
+            latestRmsX = incomingBuffer.rms_x_mms;   // 
+            latestRmsZ = incomingBuffer.rms_z_mms;
+            latestRmsY = incomingBuffer.rms_y_mms;   //
             for (int i = 0; i < 4; i++) latestBandEnergies[i] = bandEnergies[i];
 
             updateVibrationFeature(fftLocalFeatures.rms_getaran);
@@ -70,6 +72,10 @@ void Scheduler_GetLatestAxisRMS(float *xOut, float *yOut, float *zOut) {
     *xOut = latestRmsX;
     *yOut = latestRmsY;
     *zOut = latestRmsZ;
+}
+
+float Scheduler_GetLatestDominantFreqHz() {
+    return latestDominantFreqHz;
 }
 
 static void TaskAudioFFTProcessor(void *pvParameters) {
