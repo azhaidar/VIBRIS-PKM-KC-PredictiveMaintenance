@@ -5,8 +5,14 @@
 #include "RPMEstimator.h"
 #include "config.h"
 
+#ifndef M_PI
+  #define M_PI 3.14159265358979323846f
+#endif
+
 #define SAMPLE_RATE VIBRATION_SAMPLE_RATE_HZ
-#define FR_MIN_HZ 5.0
+// FIX (31 Agustus 2026, putaran ke-9): samain dengan RPMEstimator.cpp --
+// lihat komentar FR_MIN_HZ di file itu buat alasan lengkapnya.
+#define FR_MIN_HZ 15.0
 #define FR_MAX_HZ 50.0
 
 typedef struct {
@@ -59,6 +65,48 @@ float bandEnergy(double *magnitude, float freqResolution, float f_low, float f_h
         energy += magnitude[i] * magnitude[i];
     }
     return energy;
+}
+
+// FIX (31 Agustus 2026, putaran ke-4): dulu accel->velocity convert pakai
+// SATU frekuensi (dominan/1x RPM) buat SELURUH sinyal broadband -- itu
+// overestimate karena konten di frekuensi lain (noise, harmonik 2x/3x,
+// BPFO/BPFI) ikut dibagi pakai frekuensi yang gak sesuai buat mereka.
+//
+// FIX (31 Agustus 2026, putaran ke-5): percobaan pertama pakai rata-rata
+// terbobot energi dari SELURUH band 5-200Hz -- ternyata rentan ketarik ke
+// frekuensi rendah kalau ada noise/goyangan dudukan di sekitar 5-10Hz.
+// Frekuensi rendah = pembagi (2*pi*f) kecil = hasil MELEDAK, bukan
+// mengecil. Sekarang dipersempit: cuma hitung energi di JENDELA SEMPIT
+// (+-30%) di sekitar 1x RPM dan 2x RPM yang SUDAH DIKETAHUI dari RPM
+// estimator (refFreqHz, dari stableRPM cycle sebelumnya) -- bukan rata-
+// rata seluruh spektrum. Ini jauh lebih tahan terhadap noise di frekuensi
+// yang gak relevan sama sekali dengan putaran motor yang sebenarnya.
+static float computeVelocityRMS(double accelRmsG, double *magnitude, float freqResolution, int n, float refFreqHz) {
+    if (refFreqHz < 1.0f) refFreqHz = VIB_DEFAULT_DOMINANT_FREQ_HZ;
+
+    double weightedFreqSum = 0.0, weightSum = 0.0;
+    float centers[2] = { refFreqHz, refFreqHz * 2.0f };  // 1x RPM (unbalance) & 2x RPM (misalignment)
+    const float windowPercent = 0.3f;
+
+    for (int c = 0; c < 2; c++) {
+        float loHz = centers[c] * (1.0f - windowPercent);
+        float hiHz = centers[c] * (1.0f + windowPercent);
+        int binLo = (int)(loHz / freqResolution);
+        int binHi = (int)(hiHz / freqResolution);
+        if (binLo < 1) binLo = 1;   // skip bin 0 (DC) -- freq=0 bikin pembagian meledak
+        if (binHi >= n / 2) binHi = n / 2 - 1;
+        for (int i = binLo; i <= binHi; i++) {
+            double w = magnitude[i] * magnitude[i];
+            weightedFreqSum += w * (double)(i * freqResolution);
+            weightSum += w;
+        }
+    }
+
+    float fEff = (weightSum > 1e-9) ? (float)(weightedFreqSum / weightSum) : refFreqHz;
+    if (fEff < 1.0f) fEff = refFreqHz;
+
+    float factor = 9.81f * 1000.0f / (2.0f * (float)M_PI * fEff);
+    return (float)(accelRmsG * factor);
 }
 
 static TopFreqPeaks latestTopPeaks = {0};
@@ -124,6 +172,25 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
     float kurtosis = (variance > 1e-9) ? (float)((sum4 / FFT_SAMPLES) / (variance * variance)) : 0.0f;
     features->kurtosis = kurtosis;
 
+    // FIX (31 Agustus 2026, putaran ke-4): input->samples[i] sekarang
+    // akselerasi MENTAH dalam G (DriverGetaran.cpp gak convert ke mm/s
+    // lagi di titik sampling). RMS akselerasi ini dihitung dulu di sini,
+    // konversi ke velocity (mm/s) menyusul di bawah SETELAH spektrum FFT
+    // tersedia (computeVelocityRMS butuh spektrum buat cari frekuensi
+    // efektif).
+    double sumSquareAccel = 0;
+    for (int i = 0; i < FFT_SAMPLES; i++) sumSquareAccel += input->samples[i] * input->samples[i];
+    double accelRmsG = sqrt(sumSquareAccel / FFT_SAMPLES);
+
+    float effectiveSampleRate = (input->actual_rate_hz > 1.0f) ?
+        input->actual_rate_hz : SAMPLE_RATE;
+    float freqResolution = effectiveSampleRate / FFT_SAMPLES;
+
+    // FIX (31 Agustus 2026, putaran ke-5): frekuensi acuan buat konversi
+    // velocity -- pakai stableRPM (hasil cycle SEBELUMNYA, static di file
+    // ini) kalau ada, biar computeVelocityRMS gak perlu nebak dari
+    // spektrum mentah yang belum diproses.
+    float refFreqHz = (stableRPM > 60.0f) ? (stableRPM / 60.0f) : VIB_DEFAULT_DOMINANT_FREQ_HZ;
 
     for (int i = 0; i < FFT_SAMPLES; i++) {
         vReal[i] = input->samples[i] - mean;
@@ -134,20 +201,26 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
     FFT.compute(FFTDirection::Forward);
     FFT.complexToMagnitude();
 
+    // FIX (31 Agustus 2026, putaran ke-4): rms_getaran (mm/s) sekarang
+    // dihitung PER-BIN FREKUENSI pakai spektrum single-cycle ini (belum
+    // rata-rata SPECTRAL_AVG_COUNT cycle -- itu baru siap di bawah, di
+    // fase akumulasi ini pakai versi single-cycle dulu biar tetap ada
+    // angka yang wajar buat ditampilkan selama fase warm-up).
+    features->rms_getaran = computeVelocityRMS(accelRmsG, vReal, freqResolution, FFT_SAMPLES, refFreqHz);
+
     for (int i = 0; i < FFT_SAMPLES / 2; i++) {
         avgMagnitude[i] += vReal[i];
     }
     avgAccumCount++;
 
-    float sumSquare = 0;
-    for (int i = 0; i < FFT_SAMPLES; i++) sumSquare += input->samples[i] * input->samples[i];
-    features->rms_getaran = sqrt(sumSquare / FFT_SAMPLES);
-
-    float effectiveSampleRate = (input->actual_rate_hz > 1.0f) ?
-        input->actual_rate_hz : SAMPLE_RATE;
-
     if (avgAccumCount < SPECTRAL_AVG_COUNT) {
-        FFTProcessor_ExtractTopPeaks(vReal, FFT_SAMPLES / 2, &latestTopPeaks, effectiveSampleRate);
+        FFTProcessor_ExtractTopPeaks(vReal, FFT_SAMPLES, &latestTopPeaks, effectiveSampleRate);
+
+        // Store bin indices even during accumulation phase
+        for (int i = 0; i < 10; i++) {
+            latestPeakBins[i] = latestTopPeaks.bin_indices[i];
+        }
+        latestFreqRes = latestTopPeaks.freq_resolution;
 
         *rpm_out = stableRPM;
         if (snr_out) *snr_out = 0.0f;
@@ -161,7 +234,33 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
     }
     avgAccumCount = 0;
 
-    FFTProcessor_ExtractTopPeaks(vReal, FFT_SAMPLES / 2, &latestTopPeaks, effectiveSampleRate);
+    // FIX (31 Agustus 2026, putaran ke-4): sekarang spektrumnya sudah versi
+    // rata-rata (lebih stabil/gak terlalu noisy dibanding single-cycle di
+    // atas) -- recompute rms_getaran pakai spektrum yang lebih bagus ini.
+    features->rms_getaran = computeVelocityRMS(accelRmsG, vReal, freqResolution, FFT_SAMPLES, refFreqHz);
+
+    // FIX (31 Agustus 2026, putaran ke-6, SEMENTARA buat diagnosa): print
+    // ini nunjukin angka MENTAH di tiap tahap perhitungan velocity, biar
+    // ketahuan PERSIS di bagian mana angkanya meledak (bukan tebak-tebakan
+    // lagi). Hapus/comment blok ini lagi kalau masalahnya udah ketemu.
+    Serial.printf("[VIB-DEBUG] accelRmsG=%.5f G | refFreqHz=%.2f Hz | rms_getaran=%.3f mm/s\n",
+                  accelRmsG, refFreqHz, features->rms_getaran);
+
+    FFTProcessor_ExtractTopPeaks(vReal, FFT_SAMPLES, &latestTopPeaks, effectiveSampleRate);
+
+    // FIX (31 Agustus 2026): blok "Store dominant frequency kembali ke
+    // input buffer" yang lama di sini gak pernah beneran nulis apa-apa
+    // (cuma komentar kosong) -- dominant_freq_hz akhirnya SELALU 0 dan
+    // konversi akselerasi->kecepatan di DriverGetaran.cpp SELALU jatuh ke
+    // default 25Hz, gak peduli RPM motor yang sebenarnya. Itu penyebab
+    // rms_v (mm/s) sering kebaca 2-3x lebih tinggi dari standar ISO 10816.
+    // Perbaikannya dipindah ke DualCoreTaskScheduler.cpp (bukan di sini),
+    // karena FFTProcessor_Process dan DriverGetaran jalan di task/core
+    // berbeda yang cuma tukeran data lewat salinan Queue -- nulis ke
+    // "input->dominant_freq_hz" di sini gak akan pernah nyampe balik ke
+    // DriverGetaran. Sekarang dipakai variabel volatile + fungsi accessor
+    // Scheduler_GetLatestDominantFreqHz(), pola yang sama seperti yang
+    // sudah dipakai untuk RPM/SNR/axis-RMS di file yang sama.
 
     // Store bin indices dan freq resolution untuk diakses Transmitter
     for (int i = 0; i < 10; i++) {
@@ -176,6 +275,7 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
     bool reliable = snrReliable && (features->rms_getaran > VIBRATION_ABSOLUTE_FLOOR);
     float freqResDiag = effectiveSampleRate / FFT_SAMPLES;
     int binMinDiag = (int)(FR_MIN_HZ / freqResDiag);
+    if (binMinDiag < 1) binMinDiag = 1;   // FIX (31 Agustus 2026, putaran ke-7): sama, jangan izinkan bin DC
     int binMaxDiag = (int)(FR_MAX_HZ / freqResDiag);
     float top3Amp[3] = {0.0f, 0.0f, 0.0f};
     int top3Bin[3] = {binMinDiag, binMinDiag, binMinDiag};
@@ -227,7 +327,14 @@ void FFTProcessor_Process(VibrationBuffer *input, SensorFeatures *features,
     }
 
     reliableStreak++;
-    if (reliableStreak >= 2) stableRPM = fr_rpm;
+    // FIX (31 Agustus 2026, putaran ke-11): dulu cukup 2x pembacaan
+    // "reliable" beruntun buat langsung PERCAYA itu RPM valid & dikunci
+    // ke stableRPM -- kebukti kelewat gampang, noise sesaat yang
+    // kebetulan nembus ambang SNR 2x bisa bikin RPM palsu nyangkut
+    // (RPM=1222 muncul padahal sensor didiemin, SNR sempat 0.00 barusan).
+    // Dinaikkan ke 5x biar butuh sinyal yang KONSISTEN lebih lama sebelum
+    // dipercaya, jauh lebih tahan noise sesaat.
+    if (reliableStreak >= 5) stableRPM = fr_rpm;
     *rpm_out = stableRPM;
 
     float fr_hz = fr_rpm / 60.0;
