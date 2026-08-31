@@ -62,6 +62,10 @@ void setup() {
     Serial.begin(115200);
     delay(2000);
     Serial.println(F("[SYSTEM] Booting Clean Modular Sensor Core..."));
+    // PENANDA VERSI (31 Agustus 2026, putaran ke-9, FR_MIN_HZ=15.0Hz) --
+    // kalau baris ini GAK MUNCUL di Serial Monitor pas boot, berarti
+    // firmware yang ke-upload BUKAN versi yang barusan diganti filenya.
+    Serial.println(F("[BUILD] v9-FRMIN15HZ-31AGT2026"));
 
     xTaskCreatePinnedToCore(TaskDriverINM, "Task_INM", STACK_TASK_INM, NULL, PRIO_TASK_INM, NULL, CORE_DSP_HIGH_SPEED);
     Scheduler_InitTasks();
