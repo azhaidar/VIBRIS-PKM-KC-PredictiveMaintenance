@@ -7,12 +7,24 @@
 // Di luar rentang ini diabaikan supaya nggak salah tangkap noise frekuensi
 // rendah (getaran lingkungan, goyangan meja) atau harmonik tinggi yang
 // bukan representasi RPM asli.
-#define FR_MIN_HZ 5.0
+// FIX (31 Agustus 2026, putaran ke-9): dinaikkan dari 5.0 ke 15.0. Motor uji
+// kalian sudah dikonfirmasi jalan di ~1400 RPM (~23Hz) -- jauh di atas 15Hz,
+// jadi aman. Kenapa dinaikkan: ada noise/getaran nyata di sekitar 5-10Hz
+// (dudukan/goyangan) yang berulang kali kepilih jadi "RPM" walau bin DC
+// sudah dibuang & heuristik setengah-frekuensi sudah dimatikan -- artinya
+// bukan cuma bug logika, tapi memang ada energi asli di situ. Menaikkan
+// batas bawah pencarian ke 15Hz memastikan area itu SAMA SEKALI gak jadi
+// kandidat, gak peduli heuristik/interpolasi apapun yang jalan di
+// belakangnya. Konsekuensi: motor yang jalan di bawah 900 RPM (15Hz) gak
+// akan kedeteksi RPM-nya dengan device ini -- kalau nanti ada mesin uji
+// yang RPM-nya di bawah itu, angka ini perlu diturunkan lagi (dengan
+// risiko noise 5-10Hz ikut balik).
+#define FR_MIN_HZ 15.0
 #define FR_MAX_HZ 50.0
 
 static float g_snrCalibBuffer[200];
 static int   g_snrCalibCount = 0;
-static float g_runtimeSNRThreshold = 3.0f;  // fallback awal -- disesuaikan dari data SNR
+static float g_runtimeSNRThreshold = 1.5f;  // fallback awal -- disesuaikan dari data SNR
                                               // real motor uji (konsisten 2.1-4.9 di 2 sesi
                                               // logging terakhir), BUKAN tebakan. Nilai lama
                                               // (6.0) gak pernah kelewatan oleh SNR asli motor
@@ -45,7 +57,18 @@ float computeSNRThresholdFromCalibration() {
 void setRuntimeSNRThreshold(float threshold) { g_runtimeSNRThreshold = threshold; }
 bool RPM_IsSignalReliable(double *magnitude, int n, float sampleRate, float *snrOut) {
     float freqResolution = sampleRate / n;
+    // FIX (31 Agustus 2026, putaran ke-7 -- INI AKAR MASALAHNYA): (int)
+    // cuma buang angka desimal (truncate ke bawah), bukan pembulatan.
+    // Kalau FR_MIN_HZ/freqResolution < 1 (kejadian di sini: 5.0/7.03 =
+    // 0.71), hasilnya (int)0.71 = 0 -- BUKAN 1. Artinya bin 0 (DC, 0Hz,
+    // yang seharusnya DIBUANG karena bukan getaran asli) malah IKUT
+    // masuk sebagai kandidat "puncak getaran valid". Kalau ada sisa
+    // noise/leakage kecil di situ, itu yang kepilih jadi "RPM" -- salah
+    // total, jauh di bawah RPM motor asli. Ini penyebab RPM kebaca
+    // ratusan padahal motor jalan ribuan RPM, yang bikin SEMUA konversi
+    // ke mm/s ikut meledak (pembagi frekuensi kekecilan).
     int binMin = (int)(FR_MIN_HZ / freqResolution);
+    if (binMin < 1) binMin = 1;   // paksa minimal bin 1, jangan pernah izinkan bin 0 (DC)
     int binMax = (int)(FR_MAX_HZ / freqResolution);
 
     float peakAmp = 0;
@@ -90,7 +113,12 @@ float RPM_Estimate(double *magnitude, int n, float sampleRate) {
 
     // Konversi batas Hz ke index bin FFT, karena kita nyari di array bin
     // bukan langsung di domain Hz.
+    // FIX (31 Agustus 2026, putaran ke-7): sama kayak di RPM_IsSignalReliable
+    // -- (int) truncate bisa hasilin 0 kalau FR_MIN_HZ/freqResolution < 1,
+    // membiarkan bin DC (0Hz) ikut dicari sebagai kandidat RPM. Paksa
+    // minimal bin 1.
     int binMin = (int)(FR_MIN_HZ / freqResolution);
+    if (binMin < 1) binMin = 1;
     int binMax = (int)(FR_MAX_HZ / freqResolution);
 
     // Cari bin dengan amplitudo tertinggi HANYA di rentang bin yang masuk akal.
@@ -108,6 +136,21 @@ float RPM_Estimate(double *magnitude, int n, float sampleRate) {
             maxBinIndex = i;
         }
     }
+    // FIX (31 Agustus 2026, putaran ke-8): heuristik "cek setengah-frekuensi"
+    // di bawah ini (awalnya buat nangani kasus 2x-harmonic lebih kuat dari
+    // 1x) ternyata JADI SUMBER MASALAH BARU -- kalau ada noise di bin
+    // rendah (~7Hz, deket batas bawah FR_MIN_HZ), heuristik ini nganggep
+    // itu "kandidat setengah-frekuensi yang valid" dan OVERRIDE puncak
+    // yang tadinya SUDAH BENAR (di sekitar RPM motor asli) jadi bin
+    // rendah yang salah itu. Ini yang bikin RPM tetap kebaca ratusan
+    // (bukan ~1400) walau bin 0/DC sudah dibuang di fix sebelumnya --
+    // celahnya pindah ke heuristik ini. Dinonaktifkan dulu (bukan
+    // dihapus, biar gampang diaktifkan lagi kalau nanti mau dikalibrasi
+    // ulang dengan syarat yang lebih ketat) -- kasus 2x-dominant lebih
+    // jarang terjadi dibanding false-positive noise yang sudah terbukti
+    // berulang kali kejadian ini.
+    #define ENABLE_HALF_FREQ_HARMONIC_CHECK 0
+    #if ENABLE_HALF_FREQ_HARMONIC_CHECK
     // BARU: cari amplitudo TERTINGGI di JENDELA sekitar setengah-frekuensi
     // (bukan cuma 1 bin persis), karena pembagian integer (maxBinIndex/2)
     // bisa meleset 1 bin dari posisi puncak 1x yang sebenarnya.
@@ -132,6 +175,7 @@ float RPM_Estimate(double *magnitude, int n, float sampleRate) {
             maxAmplitude = bestHalfAmplitude;
         }
     }
+    #endif
     // Konversi index bin balik ke frekuensi (Hz), lalu ke RPM (x60)
     float refinedBin = (float)maxBinIndex;
         if (maxBinIndex > 0 && maxBinIndex < (n / 2) - 1) {
@@ -145,6 +189,21 @@ float RPM_Estimate(double *magnitude, int n, float sampleRate) {
             }
         }
         float fr_hz = refinedBin * freqResolution;
+
+        // FIX (31 Agustus 2026, putaran ke-10): batas FR_MIN_HZ di ATAS cuma
+        // ngatur titik AWAL pencarian bin -- tapi interpolasi parabolik di
+        // atas (pakai magnitude[maxBinIndex-1]) bisa geser hasil akhirnya
+        // (fr_hz) turun sedikit MELEWATI batas itu (kebukti: sensor dilepas
+        // dari motor, RPM tetap kebaca ~641 alias ~10.7Hz -- di bawah 15Hz).
+        // Kunci ULANG di titik paling akhir sebelum di-return, gak peduli
+        // proses apapun yang menghasilkannya: kalau fr_hz akhirnya tetap di
+        // bawah FR_MIN_HZ, itu BUKAN putaran motor asli (di luar rentang
+        // fisik motor kecil 300-3000 RPM yang jadi target proposal ini),
+        // anggap gak ada RPM valid yang kedeteksi (0), jangan malah
+        // dilaporkan sebagai angka RPM yang salah.
+        if (fr_hz < FR_MIN_HZ) {
+            return 0.0f;
+        }
         return fr_hz * 60.0;
 }
 float RPM_ComputeBPFO(float fr_hz, int n_balls, float d_ball, float D_pitch, float phi_deg) {
