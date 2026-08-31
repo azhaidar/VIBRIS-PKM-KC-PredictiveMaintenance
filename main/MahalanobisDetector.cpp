@@ -29,8 +29,8 @@
 #include <string.h>
 #include <math.h>   // BARU: untuk sqrtf
 
-#define CHI_SQUARE_95 7.815f
-#define CHI_SQUARE_99 11.345f
+#define CHI_SQUARE_95 12.5f
+#define CHI_SQUARE_99 17.250f
 float getChiSquare99() {
     return CHI_SQUARE_99;
 }
@@ -471,7 +471,17 @@ void debugPrintD2Contribution(float z_scores_raw[3], float z_scores_clipped[3], 
     float d2 = computeMahalanobisQuadraticForm(currentFeaturesStd, zeroMean, sigmaInverse);
     float currentRpm = Scheduler_GetLatestRPM();
 
-    bool trulyIdle = (currentRpm <= 0.0f) && (merged.rms_getaran <= VIBRATION_ABSOLUTE_FLOOR);
+    // FIX (31 Agustus 2026): dulu "trulyIdle" butuh DUA syarat sekaligus
+    // (RPM<=0 DAN rms_getaran <= VIBRATION_ABSOLUTE_FLOOR). Sekarang RPM
+    // sudah akurat (bug FR_MIN_HZ & heuristik setengah-frekuensi sudah
+    // diperbaiki), tapi rms_getaran masih bisa punya sisa noise dikit di
+    // atas floor walau motor beneran mati -- akibatnya syarat kedua itu
+    // gagal terus, trulyIdle jadi FALSE terus, dan mesin yang beneran
+    // diam malah dibandingin ke baseline "mesin nyala normal" (lewat
+    // classifyStatusFromD2) -- pasti jauh beda, jadi selalu ke-cap
+    // "Bahaya" walau mesin mati. RPM sekarang sudah cukup dipercaya
+    // sendirian buat nentuin diam/nyala, jadi syarat vibrasi dilepas.
+    bool trulyIdle = (currentRpm <= 0.0f);
     Serial.printf("[MOTOR-STATE] RPM=%.1f, RMS_vib=%.4f (threshold=%.4f), trulyIdle=%d, D2=%.2f\n",
         currentRpm, merged.rms_getaran, VIBRATION_ABSOLUTE_FLOOR, (int)trulyIdle, d2);
 
