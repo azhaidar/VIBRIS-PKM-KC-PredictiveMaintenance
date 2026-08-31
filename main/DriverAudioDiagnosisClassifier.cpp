@@ -1,40 +1,24 @@
-// AudioDiagnosisClassifier.cpp
-#include "DriverAudioDiagnosisClassifier.h"
-#include <string.h>
+// DriverAudioDiagnosisClassifier.h
+#pragma once
+#include "SharedTypes.h"
 
-// Ambang sama seperti DiagnosisClassifier getaran (Z-score 2.0), untuk
-// konsistensi lintas modul -- lihat BAB 2.6 proposal.
-#define AUDIO_Z_SCORE_THRESHOLD 2.0f
+/*
+MODUL BARU: Audio Diagnosis Classifier
+
+Rekan AudioFFTProcessor -- versi audio dari DiagnosisClassifier yang
+sudah ada untuk getaran. Pola identik: hitung Z-score tiap band terhadap
+baseline, cari band paling menyimpang, keluarkan label sesuai band itu.
+
+KETERBATASAN -- LEBIH BESAR dari versi getaran, harus ditekankan ke juri:
+DiagnosisClassifier (getaran) berbasis rumus fisik mapan (1x/2x RPM,
+BPFO, BPFI dari literatur vibration analysis). Modul ini TIDAK -- batas
+band di AudioFFTProcessor.cpp masih heuristik kasar "suara rendah =
+kemungkinan rumble mekanis, suara tinggi = kemungkinan gesekan kering",
+belum divalidasi dengan data suara kerusakan nyata. Kalau ditanya juri,
+jujurkan ini sebagai prototipe struktural (buktikan bahwa arsitekturnya
+SUDAH BISA membedakan karakter suara, bukan cuma volume), bukan sebagai
+kemampuan diagnostik audio yang sudah tervalidasi.
+*/
 void DriverAudioDiagnosis_Classify(float bandEnergies[3], float bandBaselineMean[3],
                               float bandBaselineStd[3], char *labelOutput,
-                              float *confidenceOutput, uint8_t *flagsOutput) {
-    // Index 0: LOW  -> rumble mekanis frekuensi rendah
-    // Index 1: MID  -> baseline dengungan motor normal
-    // Index 2: HIGH -> gesekan/decitan frekuensi tinggi
-    static const char* labels[3] = {"LOW_FREQ_RUMBLE", "MID_FREQ_ANOMALY", "HIGH_FREQ_SQUEAL"};
-
-    float zScores[3];
-    float maxZ = -999.0f;
-    int maxIdx = 0;
-    uint8_t flags = 0; 
-
-    for (int i = 0; i < 3; i++) {
-        float sd = (bandBaselineStd[i] > 0.0001f) ? bandBaselineStd[i] : 1.0f;
-        zScores[i] = (bandEnergies[i] - bandBaselineMean[i]) / sd;
-        if (zScores[i] > AUDIO_Z_SCORE_THRESHOLD) {  
-            flags |= (1 << i);                        
-        }
-        if (zScores[i] > maxZ) {
-            maxZ = zScores[i];
-            maxIdx = i;
-        }
-    }
-    *flagsOutput = flags; 
-    if (maxZ < AUDIO_Z_SCORE_THRESHOLD) {
-        strcpy(labelOutput, "NORMAL");
-        *confidenceOutput = 0.0f;
-    } else {
-        strcpy(labelOutput, labels[maxIdx]);
-        *confidenceOutput = maxZ;
-    }
-}
+                              float *confidenceOutput, uint8_t *flagsOutput);
