@@ -11,12 +11,22 @@
 // 1. BUFFER DATA MENTAH (RAW DATA BUFFER - CORE 0 TO DSP)
 // ===================================================================
 struct VibrationBuffer {
-    float samples[FFT_SAMPLES]; // Array float untuk menampung sampel getaran LIS3DH [cite: 2026-05-06]
+    float samples[FFT_SAMPLES]; // Array float untuk menampung sampel getaran AKSELERASI MENTAH (G).
+                                 // FIX (31 Agustus 2026): sempat diisi VELOCITY (mm/s) langsung di
+                                 // sini (30 Agustus 2026), tapi itu overestimate (1 frekuensi buat
+                                 // seluruh sinyal broadband) -- balik ke akselerasi mentah, konversi
+                                 // ke velocity sekarang per-bin frekuensi di FFTProcessor.cpp.
     uint32_t timestamp;         // Waktu pengambilan sampel (millis/micros)
-    float rms_x_raw;
-    float rms_y_raw;
-    float rms_z_raw;
+    float rms_x_mms;            // RMS acceleration sumbu X dalam mm/s
+    float rms_y_mms;            // RMS acceleration sumbu Y dalam mm/s
+    float rms_z_mms;            // RMS acceleration sumbu Z dalam mm/s
     float actual_rate_hz;
+    float dominant_freq_hz;     // SUDAH TIDAK DIPAKAI (31 Agustus 2026) -- field ini
+                                 // gak pernah ditulis, konversi A->V sekarang pakai
+                                 // Scheduler_GetLatestDominantFreqHz() (lihat
+                                 // DualCoreTaskScheduler.cpp/.h & DriverGetaran.cpp).
+                                 // Dibiarkan di struct ini biar ukurannya gak berubah
+                                 // (dipakai juga di queue/flash), tapi jangan dipakai lagi.
 };
 struct AudioBuffer {
     float samples[AUDIO_FFT_SAMPLES];
