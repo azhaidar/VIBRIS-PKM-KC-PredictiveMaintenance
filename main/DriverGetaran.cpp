@@ -7,6 +7,10 @@
 #include <math.h>
 #include "DualCoreTaskScheduler.h"
 
+#ifndef M_PI
+  #define M_PI 3.14159265358979323846f
+#endif
+
 portMUX_TYPE getaranMux = portMUX_INITIALIZER_UNLOCKED;
 static TwoWire I2CLis3dh = TwoWire(0);
 static Adafruit_LIS3DH lis3dhInstance = Adafruit_LIS3DH(&I2CLis3dh);
@@ -61,6 +65,23 @@ void TaskDriverGetaran(void *pvParameters) {
         int overrunCount = 0;
         double sumSqX = 0.0, sumSqY = 0.0, sumSqZ = 0.0;
 
+        // FIX (31 Agustus 2026, putaran ke-4): 3 percobaan sebelumnya
+        // (pakai SATU frekuensi dominan buat convert SELURUH sinyal ke
+        // mm/s, di titik SAMPLING ini) semua punya masalah yang sama-sama
+        // berakar dari 1 hal: rumus V=A/(2*pi*f) cuma valid buat 1
+        // frekuensi tunggal, padahal sinyal getaran asli itu broadband
+        // (ada noise & harmonik di banyak frekuensi). Convert SEMUA itu
+        // pakai SATU factor (walaupun frekuensinya udah benar) tetap
+        // overestimate, karena konten di frekuensi lain ikut kebagi
+        // pakai frekuensi yang gak sesuai buat mereka.
+        //
+        // Solusi yang benar: JANGAN convert ke mm/s di sini sama sekali.
+        // Simpan magnitude MENTAH (akselerasi, satuan G) apa adanya.
+        // Konversi ke velocity (mm/s) sekarang dilakukan PER-BIN FREKUENSI
+        // di FFTProcessor.cpp, setelah spektrumnya ada -- itu tempat yang
+        // benar buat perhitungan ini, karena FFT-lah yang tau kontribusi
+        // tiap frekuensi secara terpisah.
+
         for (int i = 0; i < FFT_SAMPLES; i++) {
             bool readOk = lis3dhInstance.getEvent(&event);
 
@@ -89,8 +110,11 @@ void TaskDriverGetaran(void *pvParameters) {
             filteredYOld = fy; rawYOld = ay;
             filteredZOld = fz; rawZOld = az;
 
-            float dynamicVibration = sqrtf(fx * fx + fy * fy + fz * fz);
-            localVibBuffer.samples[i] = dynamicVibration;
+            // FIX (31 Agustus 2026, putaran ke-4): magnitude akselerasi
+            // mentah (G), TANPA dikonversi -- konversi ke mm/s dipindah
+            // ke FFTProcessor.cpp (per-bin frekuensi, lebih akurat).
+            float accelMagnitude = sqrtf(fx * fx + fy * fy + fz * fz);
+            localVibBuffer.samples[i] = accelMagnitude;
 
             sumSqX += (double)(fx * fx);
             sumSqY += (double)(fy * fy);
@@ -101,13 +125,36 @@ void TaskDriverGetaran(void *pvParameters) {
                 overrunCount++;
             }
             while ((int32_t)(micros() - nextSampleUs) < 0) {
-                taskYIELD();
+                // FIX (29 Agustus 2026): Ganti spin-loop pure taskYIELD() dengan delayMicroseconds(1)
+                // Alasan: FFT_SAMPLES naik 256->512 buat delay timing lebih ketat; spin-loop
+                // murni kasih CPU load tinggi & risiko priority inversion. Delay 1µs lebih aman.
+                delayMicroseconds(1);
             }
         }
 
-        localVibBuffer.rms_x_raw = sqrtf((float)(sumSqX / FFT_SAMPLES));
-        localVibBuffer.rms_y_raw = sqrtf((float)(sumSqY / FFT_SAMPLES));
-        localVibBuffer.rms_z_raw = sqrtf((float)(sumSqZ / FFT_SAMPLES));
+        // FIX (30 Agustus 2026): Hitung RMS dalam G, lalu convert ke mm/s
+        // menggunakan dominant frekuensi dari FFT sebelumnya (atau default 25Hz)
+        // FIX (31 Agustus 2026): ini cuma dipakai buat breakdown per-axis
+        // (rms_x/y/z_mms, field sekunder/diagnostik) -- BUKAN buat rms_v_mms
+        // utama lagi (itu sekarang dihitung per-bin frekuensi di
+        // FFTProcessor.cpp, lebih akurat). Approksimasi satu-frekuensi di
+        // sini cukup buat breakdown per-axis, tapi tetap di-gate ke 0 saat
+        // idle (belum ada frekuensi dominan reliable) biar konsisten --
+        // gak menyebabkan deadlock RPM karena field ini gak dipakai buat
+        // cek reliability (yang dipakai cuma features->rms_getaran).
+        float rawDominantFreq = Scheduler_GetLatestDominantFreqHz();
+        bool hasReliableAxisFreq = (rawDominantFreq >= 1.0f);
+        float axisDominantFreq = hasReliableAxisFreq ? rawDominantFreq : VIB_DEFAULT_DOMINANT_FREQ_HZ;
+        float accelToVelFactorAxis = hasReliableAxisFreq ?
+            (9.81f * 1000.0f / (2.0f * M_PI * axisDominantFreq)) : 0.0f;
+
+        float rms_x_g = sqrtf((float)(sumSqX / FFT_SAMPLES));
+        float rms_y_g = sqrtf((float)(sumSqY / FFT_SAMPLES));
+        float rms_z_g = sqrtf((float)(sumSqZ / FFT_SAMPLES));
+
+        localVibBuffer.rms_x_mms = rms_x_g * accelToVelFactorAxis;
+        localVibBuffer.rms_y_mms = rms_y_g * accelToVelFactorAxis;
+        localVibBuffer.rms_z_mms = rms_z_g * accelToVelFactorAxis;
 
         uint32_t batchElapsedUs = micros() - batchStartUs;
         float actualRateHz = (float)FFT_SAMPLES * 1000000.0f / (float)batchElapsedUs;
